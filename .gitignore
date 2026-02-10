@@ -1,0 +1,44 @@
+# Visual Studio
+.vs/
+.vscode/
+
+# Build results
+/bin/
+/obj/
+**/bin/
+**/obj/
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.user
+*.suo
+*.userprefs
+*.lock
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+.env
+.env.*
+!.env.example
+public/hot
+dist/
+dist-ssr/
+*.local
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Rider
+.idea/
+
+# Dotnet user secrets
+**/*.json.user
+**/secrets.json
+
+# Logs
+*.log

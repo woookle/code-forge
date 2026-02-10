@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: codegenerator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: yourpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  api:
+    build:
+      context: ./CodeForgeAPI
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=codeforge;Username=postgres;Password=yourpassword
+      - JwtSettings__Secret=YourSuperSecretKeyThatIsAtLeast32CharactersLong!@#$%
+      - JwtSettings__Issuer=CodeForgeAPI
+      - JwtSettings__Audience=CodeForgeUI
+    ports:
+      - "5000:80"
+    depends_on:
+      - postgres
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
