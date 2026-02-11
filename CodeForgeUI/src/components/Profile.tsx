@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { logout, setUser } from '../features/auth/authSlice';
+import { setUser, updateUser } from '../features/auth/authSlice';
 import { Page } from '../App';
 import api from '../utils/api';
 import { toast } from 'react-toastify';
@@ -16,10 +16,20 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [uploading, setUploading] = useState(false);
 
-    const handleLogout = () => {
-        dispatch(logout());
-        toast.info('Вы вышли из системы');
-    };
+    const [firstName, setFirstName] = useState(user?.firstName || '');
+    const [lastName, setLastName] = useState(user?.lastName || '');
+    const [isDarkMode, setIsDarkMode] = useState(user?.isDarkMode || false);
+
+    // Sync local state when user data changes (e.g. after initial load)
+    React.useEffect(() => {
+        if (user) {
+            setFirstName(user.firstName || '');
+            setLastName(user.lastName || '');
+            setIsDarkMode(user.isDarkMode || false);
+        }
+    }, [user]);
+
+
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -52,6 +62,24 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
         fileInputRef.current?.click();
     };
 
+    const handleSave = async () => {
+        if (!user) return;
+
+        try {
+            await dispatch(updateUser({
+                id: user.id,
+                data: {
+                    firstName,
+                    lastName,
+                    isDarkMode
+                }
+            })).unwrap();
+            toast.success('Профиль обновлен');
+        } catch (error) {
+            toast.error('Ошибка обновления профиля');
+        }
+    };
+
     return (
         <div className="login-container animate-fade-in">
             <div className="login-card animate-slide-up" style={{ maxWidth: '600px' }}>
@@ -66,7 +94,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                             height: '120px',
                             borderRadius: '50%',
                             backgroundColor: '#f3f4f6',
-                            backgroundImage: user?.avatarUrl ? `url(http://localhost:5123${user.avatarUrl})` : 'none',
+                            backgroundImage: user?.avatarUrl ? `url(${import.meta.env.VITE_IMG_URL}${user.avatarUrl})` : 'none',
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
                             display: 'flex',
@@ -121,7 +149,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                         value={user?.email || ''}
                         readOnly
                         disabled
-                        style={{ backgroundColor: '#f9fafb' }}
+                        className="input-disabled"
                     />
                 </div>
 
@@ -130,36 +158,45 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                         <label>Имя</label>
                         <input
                             type="text"
-                            value={user?.firstName || ''}
-                            readOnly
-                            disabled
-                            style={{ backgroundColor: '#f9fafb' }}
+                            value={firstName}
+                            onChange={(e) => setFirstName(e.target.value)}
+                            placeholder="Иван"
                         />
                     </div>
                     <div className="form-group" style={{ flex: 1 }}>
                         <label>Фамилия</label>
                         <input
                             type="text"
-                            value={user?.lastName || ''}
-                            readOnly
-                            disabled
-                            style={{ backgroundColor: '#f9fafb' }}
+                            value={lastName}
+                            onChange={(e) => setLastName(e.target.value)}
+                            placeholder="Иванов"
                         />
                     </div>
                 </div>
 
-                <div className="flex gap-2" style={{ marginTop: '2rem', justifyContent: 'flex-end' }}>
+                <div className="form-group checkbox-group" style={{ marginBottom: '2rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            checked={isDarkMode}
+                            onChange={(e) => setIsDarkMode(e.target.checked)}
+                        />
+                        <span>Темный режим</span>
+                    </label>
+                </div>
+
+                <div className="flex gap-2" style={{ marginTop: '1rem', justifyContent: 'flex-end' }}>
+                    <button
+                        onClick={handleSave}
+                        className="btn btn-primary"
+                    >
+                        Сохранить
+                    </button>
                     <button
                         onClick={() => onNavigate('dashboard')}
                         className="btn btn-secondary"
                     >
                         Назад
-                    </button>
-                    <button
-                        onClick={handleLogout}
-                        className="btn btn-danger"
-                    >
-                        Выйти
                     </button>
                 </div>
             </div>

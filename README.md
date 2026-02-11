@@ -10,7 +10,7 @@
 ![REACT](https://img.shields.io/badge/React-18.2.0-black?style=for-the-badge&logo=react)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16.0-black?style=for-the-badge&logo=postgresql)
 ![Vite](https://img.shields.io/badge/Vite-5.0.8-black?style=for-the-badge&logo=vite)
-![Version](https://img.shields.io/badge/Version-1.0.0-black?style=for-the-badge&logo=github)
+![Version](https://img.shields.io/badge/Version-1.0.1-black?style=for-the-badge&logo=github)
 ![Status](https://img.shields.io/badge/Status-Active-success?style=for-the-badge)
 
 CodeForge - веб-приложение для генерации шаблонного кода бэкенда на основе визуального проектирования сущностей данных. Проектируйте связи, настраивайте поля и получайте готовый к запуску проект за секунды.

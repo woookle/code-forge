@@ -80,9 +80,13 @@ public class UsersController : ControllerBase
             return NotFound();
         }
 
-        user.FirstName = request.FirstName;
-        user.LastName = request.LastName;
-        user.AvatarUrl = request.AvatarUrl;
+        user.FirstName = request.FirstName ?? user.FirstName;
+        user.LastName = request.LastName ?? user.LastName;
+        user.AvatarUrl = request.AvatarUrl ?? user.AvatarUrl;
+        if (request.IsDarkMode.HasValue)
+        {
+            user.IsDarkMode = request.IsDarkMode.Value;
+        }
         user.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
@@ -102,6 +106,7 @@ public class UsersController : ControllerBase
                 LastName = u.LastName,
                 Role = u.Role,
                 AvatarUrl = u.AvatarUrl,
+                IsDarkMode = u.IsDarkMode,
                 CreatedAt = u.CreatedAt,
                 Projects = u.Projects.Select(p => new Project 
                 { 

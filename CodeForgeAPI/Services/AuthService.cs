@@ -119,12 +119,14 @@ public class AuthService : IAuthService
         
         return new AuthResponse
         {
+            Id = user.Id,
             Token = jwtToken,
             Email = user.Email,
             FirstName = user.FirstName,
             LastName = user.LastName,
             AvatarUrl = user.AvatarUrl,
-            Role = user.Role
+            Role = user.Role,
+            IsDarkMode = user.IsDarkMode
         };
     }
 
@@ -151,12 +153,14 @@ public class AuthService : IAuthService
         
         return new AuthResponse
         {
+            Id = user.Id,
             Token = token,
             Email = user.Email,
             FirstName = user.FirstName,
             LastName = user.LastName,
             AvatarUrl = user.AvatarUrl,
-            Role = user.Role
+            Role = user.Role,
+            IsDarkMode = user.IsDarkMode
         };
     }
     

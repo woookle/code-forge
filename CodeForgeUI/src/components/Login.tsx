@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
 import VerificationModal from './VerificationModal';
 import ResetPasswordModal from './ResetPasswordModal';
+import PersonalDataModal from './PersonalDataModal';
 
 function Login() {
     const dispatch = useAppDispatch();
@@ -18,6 +19,8 @@ function Login() {
     const [showVerification, setShowVerification] = useState(false);
     const [showResetPassword, setShowResetPassword] = useState(false);
     const [verificationEmail, setVerificationEmail] = useState('');
+    const [showPersonalDataModal, setShowPersonalDataModal] = useState(false);
+    const [acceptedPersonalData, setAcceptedPersonalData] = useState(false);
 
     useEffect(() => {
         if (error) {
@@ -105,6 +108,8 @@ function Login() {
                         />
                     </div>
 
+
+
                     <div className="form-group">
                         <label>Пароль</label>
                         <input
@@ -115,6 +120,30 @@ function Login() {
                             required
                         />
                     </div>
+
+                    {!isLogin && (
+                        <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <input
+                                type="checkbox"
+                                id="personalData"
+                                checked={acceptedPersonalData}
+                                onChange={(e) => setAcceptedPersonalData(e.target.checked)}
+                                style={{ width: 'auto', margin: 0 }}
+                            />
+                            <label htmlFor="personalData" style={{ margin: 0, fontSize: '0.9rem', cursor: 'pointer' }}>
+                                Я согласен на{' '}
+                                <span
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        setShowPersonalDataModal(true);
+                                    }}
+                                    style={{ color: 'var(--accent-color)', textDecoration: 'underline', cursor: 'pointer' }}
+                                >
+                                    обработку персональных данных
+                                </span>
+                            </label>
+                        </div>
+                    )}
 
                     {isLogin && (
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
@@ -136,7 +165,7 @@ function Login() {
                         </div>
                     )}
 
-                    <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
+                    <button type="submit" className="btn btn-primary" disabled={loading || (!isLogin && !acceptedPersonalData)} style={{ width: '100%' }}>
                         {loading ? <ClipLoader color="#ffffff" size={20} /> : isLogin ? 'Войти' : 'Зарегистрироваться'}
                     </button>
                 </form>
@@ -166,6 +195,12 @@ function Login() {
             {showResetPassword && (
                 <ResetPasswordModal
                     onClose={() => setShowResetPassword(false)}
+                />
+            )}
+
+            {showPersonalDataModal && (
+                <PersonalDataModal
+                    onClose={() => setShowPersonalDataModal(false)}
                 />
             )}
         </div>

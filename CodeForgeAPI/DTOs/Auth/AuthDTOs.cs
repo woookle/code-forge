@@ -26,6 +26,7 @@ public class AuthResponse
     public string? LastName { get; set; }
     public string? AvatarUrl { get; set; }
     public string Role { get; set; } = "User";
+    public bool IsDarkMode { get; set; }
 }
 
 public class ForgotPasswordRequest

@@ -29,6 +29,15 @@ function App() {
         }
     }, [currentPage, user]);
 
+    // Apply dark mode
+    useEffect(() => {
+        if (user?.isDarkMode) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+    }, [user?.isDarkMode]);
+
     if (loading) {
         return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: '#f9fafb' }}>
             <ClipLoader color="#000000" size={50} />
@@ -37,7 +46,7 @@ function App() {
 
     return (
         <>
-            <ToastContainer position="top-right" autoClose={3000} hideProgressBar={false} newestOnTop closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="light" />
+            <ToastContainer position="bottom-left" stacked={true} autoClose={3000} hideProgressBar={false} newestOnTop closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme={user?.isDarkMode ? "dark" : "light"} />
             {!isAuthenticated ? (
                 <Login />
             ) : (

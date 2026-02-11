@@ -7,6 +7,7 @@ export interface User {
     lastName?: string;
     avatarUrl?: string;
     role: string;
+    isDarkMode?: boolean;
     projects?: Project[];
     createdAt?: string;
 }
@@ -35,6 +36,7 @@ export interface ResetPasswordRequest {
 }
 
 export interface AuthResponse {
+    id: string;
     email: string;
     firstName?: string;
     lastName?: string;
@@ -46,4 +48,5 @@ export interface UpdateUserRequest {
     firstName?: string;
     lastName?: string;
     avatarUrl?: string;
+    isDarkMode?: boolean;
 }

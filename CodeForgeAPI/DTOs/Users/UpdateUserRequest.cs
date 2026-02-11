@@ -12,4 +12,6 @@ public class UpdateUserRequest
 
     [MaxLength(500)]
     public string? AvatarUrl { get; set; }
+
+    public bool? IsDarkMode { get; set; }
 }

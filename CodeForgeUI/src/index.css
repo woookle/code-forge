@@ -148,11 +148,26 @@ h3 {
     background-color: white;
 }
 
+.form-group input:disabled,
+.form-group select:disabled,
+.input-disabled {
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
 .form-group input:focus,
 .form-group select:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+.form-group input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    cursor: pointer;
 }
 
 .checkbox-group {
@@ -201,6 +216,7 @@ h3 {
     letter-spacing: -0.025em;
     background: var(--text-primary);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -859,4 +875,140 @@ tr:last-child td {
 
     /* Hide sidebar header inside sidebar on mobile if we have external header? 
        Actually, sidebar header is good to keep for branding. */
+}
+
+/* Dark Mode Enhanced */
+body.dark-mode {
+    --bg-primary: #030712;
+    /* Gray 950 */
+    --bg-secondary: #111827;
+    /* Gray 900 */
+    --text-primary: #f3f4f6;
+    /* Gray 100 */
+    --text-secondary: #9ca3af;
+    /* Gray 400 */
+    --border-color: #1f2937;
+    /* Gray 800 */
+    --accent-color: #6366f1;
+    /* Indigo 500 */
+    --accent-hover: #4f46e5;
+    /* Indigo 600 */
+    --danger-color: #f87171;
+    /* Red 400 */
+    --success-color: #34d399;
+    /* Emerald 400 */
+    --warning-color: #fbbf24;
+    /* Amber 400 */
+}
+
+body.dark-mode .sidebar {
+    background-color: var(--bg-secondary);
+    border-right-color: var(--border-color);
+}
+
+body.dark-mode .header {
+    background-color: transparent;
+    border-bottom-color: var(--border-color);
+}
+
+body.dark-mode .mobile-header {
+    background-color: var(--bg-secondary);
+    border-bottom-color: var(--border-color);
+}
+
+body.dark-mode .entity-card,
+body.dark-mode .modal,
+body.dark-mode .login-card,
+body.dark-mode .empty-state {
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+}
+
+body.dark-mode .form-group input,
+body.dark-mode .form-group select {
+    background-color: #1f2937;
+    /* Gray 800 */
+    border-color: #374151;
+    /* Gray 700 */
+    color: var(--text-primary);
+}
+
+body.dark-mode .form-group input:disabled,
+body.dark-mode .form-group select:disabled,
+body.dark-mode .input-disabled {
+    background-color: #374151;
+    /* Lighter than input bg to differentiate or same? */
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border-color: var(--border-color);
+}
+
+body.dark-mode .form-group input:focus,
+body.dark-mode .form-group select:focus {
+    border-color: var(--accent-color);
+    background-color: #374151;
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+body.dark-mode .project-item:hover {
+    background-color: #1f2937;
+    /* Gray 800 */
+}
+
+body.dark-mode .project-item.active {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+body.dark-mode .github-banner {
+    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+body.dark-mode .github-banner:hover {
+    background: #1f2937;
+    border-color: var(--text-secondary);
+}
+
+body.dark-mode th {
+    background-color: #1f2937;
+    /* Gray 800 */
+    color: var(--text-secondary);
+    border-bottom-color: var(--border-color);
+}
+
+body.dark-mode td {
+    color: var(--text-primary);
+    border-bottom-color: var(--border-color);
+}
+
+body.dark-mode .relationship-item {
+    background-color: #1f2937;
+    border: 1px solid var(--border-color);
+}
+
+body.dark-mode .btn-secondary {
+    background-color: #1f2937;
+    color: var(--text-primary);
+    border-color: #374151;
+}
+
+body.dark-mode .btn-secondary:hover {
+    background-color: #374151;
+    border-color: #4b5563;
+}
+
+/* Smooth transitions */
+body,
+.sidebar,
+.header,
+.entity-card,
+.modal,
+.login-card,
+.form-group input,
+.btn,
+.project-item {
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }

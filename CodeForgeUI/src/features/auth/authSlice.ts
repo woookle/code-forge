@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import api from '../../utils/api';
-import { LoginRequest, RegisterRequest, User } from '../../types/auth';
+import { LoginRequest, RegisterRequest, ResetPasswordRequest, User } from '../../types/auth';
 
 interface AuthState {
     isAuthenticated: boolean;
@@ -104,6 +104,19 @@ export const verifyEmail = createAsyncThunk<void, { email: string; code: string 
     }
 );
 
+export const updateUser = createAsyncThunk<User, { id: string; data: Partial<User> }, { rejectValue: string }>(
+    'auth/update',
+    async ({ id, data }, { rejectWithValue }) => {
+        try {
+            await api.put(`/users/${id}`, data);
+            const response = await api.get<User>('/auth/me');
+            return response.data;
+        } catch (error: any) {
+            return rejectWithValue(error.response?.data?.message || 'Update failed');
+        }
+    }
+);
+
 const authSlice = createSlice({
     name: 'auth',
     initialState,
@@ -159,6 +172,10 @@ const authSlice = createSlice({
             .addCase(checkAuth.rejected, (state) => {
                 state.isAuthenticated = false;
                 state.user = null;
+            })
+            // Update User
+            .addCase(updateUser.fulfilled, (state, action: PayloadAction<User>) => {
+                state.user = action.payload;
             });
     },
 });

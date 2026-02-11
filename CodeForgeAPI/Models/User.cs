@@ -30,6 +30,8 @@ public class User
     [MaxLength(50)]
     public string Role { get; set; } = "User";
 
+    public bool IsDarkMode { get; set; } = false;
+
     // Navigation properties
     public ICollection<Project> Projects { get; set; } = new List<Project>();
 }

@@ -20,7 +20,8 @@ function Dashboard({ onNavigate }: DashboardProps) {
     const { confirm } = useConfirm();
     const [showNewProject, setShowNewProject] = useState(false);
     const [showNewEntity, setShowNewEntity] = useState(false);
-    const [showNewField, setShowNewField] = useState(false);
+    const [showFieldModal, setShowFieldModal] = useState(false);
+    const [editingField, setEditingField] = useState<Field | null>(null);
 
     const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
 
@@ -98,17 +99,43 @@ function Dashboard({ onNavigate }: DashboardProps) {
         }
     };
 
-    const handleNewField = async (entityId: string, field: Partial<Field>) => {
+    const handleSaveField = async (entityId: string, fieldData: Partial<Field>) => {
         try {
-            await api.post(`/fields/entity/${entityId}`, field);
+            if (editingField) {
+                await api.put(`/fields/${editingField.id}`, fieldData);
+                toast.success('Поле обновлено');
+            } else {
+                await api.post(`/fields/entity/${entityId}`, fieldData);
+                toast.success('Поле создано');
+            }
+
             if (currentProject) {
                 dispatch(fetchProjectById(currentProject.id));
             }
-            setShowNewField(false);
+            setShowFieldModal(false);
+            setEditingField(null);
             setSelectedEntityId(null);
-            toast.success('Поле создано');
         } catch (error) {
-            toast.error('Ошибка создания поля');
+            toast.error(editingField ? 'Ошибка обновления поля' : 'Ошибка создания поля');
+        }
+    };
+
+    const handleDeleteField = async (fieldId: string) => {
+        if (await confirm({
+            title: 'Удаление поля',
+            message: 'Вы уверены, что хотите удалить это поле?',
+            confirmText: 'Удалить',
+            type: 'danger'
+        })) {
+            try {
+                await api.delete(`/fields/${fieldId}`);
+                if (currentProject) {
+                    dispatch(fetchProjectById(currentProject.id));
+                }
+                toast.success('Поле удалено');
+            } catch (error) {
+                toast.error('Ошибка удаления поля');
+            }
         }
     };
 
@@ -158,7 +185,7 @@ function Dashboard({ onNavigate }: DashboardProps) {
             {/* Mobile Header */}
             <div className="mobile-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <img src="/logo.svg" alt="CodeForge" style={{ height: '32px', width: 'auto' }} />
+                    <img src={user?.isDarkMode ? "/logo_white.svg" : "/logo.svg"} alt="CodeForge" style={{ height: '32px', width: 'auto' }} />
                     <span style={{ fontSize: '1rem', fontWeight: 'bold' }}>CodeForge</span>
                 </div>
                 <button className="menu-btn" onClick={() => setIsSidebarOpen(true)}>
@@ -174,7 +201,7 @@ function Dashboard({ onNavigate }: DashboardProps) {
 
             <div className={`sidebar animate-slide-up ${isSidebarOpen ? 'open' : ''}`}>
                 <div className="sidebar-header" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2rem' }}>
-                    <img src="/logo.svg" alt="CodeForge" style={{ height: '40px', width: 'auto' }} />
+                    <img src={user?.isDarkMode ? "/logo_white.svg" : "/logo.svg"} alt="CodeForge" style={{ height: '40px', width: 'auto' }} />
                     <span style={{ fontSize: '1.25rem', fontWeight: 'bold', letterSpacing: '-0.5px' }}>CodeForge</span>
                 </div>
                 <h2>Мои Проекты</h2>
@@ -220,15 +247,53 @@ function Dashboard({ onNavigate }: DashboardProps) {
                 <div className="header">
                     <h1>{currentProject ? currentProject.name : 'Выберите проект'}</h1>
                     <div className="user-controls">
-                        <span>{user?.email}</span>
                         {user?.role === 'Admin' && (
                             <button className="btn btn-warning btn-small" onClick={() => onNavigate('admin')}>
                                 Админ Панель
                             </button>
                         )}
-                        <button className="btn btn-secondary btn-small" onClick={() => onNavigate('profile')}>
-                            Профиль
-                        </button>
+
+                        <div
+                            className="user-profile-summary hover-scale"
+                            onClick={() => onNavigate('profile')}
+                            title="Перейти в профиль"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                cursor: 'pointer',
+                                padding: '5px 10px',
+                                borderRadius: '8px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                transition: 'all 0.2s',
+                            }}
+                        >
+                            <div className="avatar-circle" style={{
+                                width: '32px',
+                                height: '32px',
+                                borderRadius: '50%',
+                                overflow: 'hidden',
+                                backgroundColor: '#ddd', // Fallback color
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                border: '2px solid rgba(255,255,255,0.2)'
+                            }}>
+                                {user?.avatarUrl ? (
+                                    <img
+                                        src={`${import.meta.env.VITE_IMG_URL}${user.avatarUrl}`}
+                                        alt="Avatar"
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    />
+                                ) : (
+                                    <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#555' }}>
+                                        {user?.email?.charAt(0).toUpperCase()}
+                                    </span>
+                                )}
+                            </div>
+                            <span style={{ fontWeight: '500' }}>{user?.email}</span>
+                        </div>
+
                         <button className="btn btn-secondary btn-small" onClick={handleLogout}>
                             Выйти
                         </button>
@@ -258,7 +323,8 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                             className="btn btn-primary btn-small"
                                             onClick={() => {
                                                 setSelectedEntityId(entity.id);
-                                                setShowNewField(true);
+                                                setEditingField(null);
+                                                setShowFieldModal(true);
                                             }}
                                         >
                                             + Поле
@@ -280,7 +346,8 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                                 <tr>
                                                     <th>Имя</th>
                                                     <th>Тип</th>
-                                                    <th>Опции</th>
+                                                    <th>Атрибуты</th>
+                                                    <th>Действия</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -289,9 +356,29 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                                         <td>{field.name}</td>
                                                         <td>{field.dataType}</td>
                                                         <td>
-                                                            {field.isRequired ? 'Обяз. ' : ''}
-                                                            {field.isUnique ? 'Уник. ' : ''}
-                                                            {field.isPrimaryKey ? 'Ключ ' : ''}
+                                                            {field.isRequired ? <span className="badge badge-warning">Обяз.</span> : ''}
+                                                            {field.isUnique ? <span className="badge badge-info">Уник.</span> : ''}
+                                                            {field.isPrimaryKey ? <span className="badge badge-success">Ключ</span> : ''}
+                                                        </td>
+                                                        <td>
+                                                            <div style={{ display: 'flex', gap: '5px' }}>
+                                                                <button
+                                                                    className="btn btn-secondary btn-small"
+                                                                    onClick={() => {
+                                                                        setSelectedEntityId(entity.id);
+                                                                        setEditingField(field);
+                                                                        setShowFieldModal(true);
+                                                                    }}
+                                                                >
+                                                                    ✏️
+                                                                </button>
+                                                                <button
+                                                                    className="btn btn-danger btn-small"
+                                                                    onClick={() => handleDeleteField(field.id)}
+                                                                >
+                                                                    🗑️
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -346,16 +433,18 @@ function Dashboard({ onNavigate }: DashboardProps) {
             {/* New Entity Modal */}
             {showNewEntity && <NewEntityModal onClose={() => setShowNewEntity(false)} onCreate={handleNewEntity} />}
 
-            {/* New Field Modal */}
-            {showNewField && selectedEntityId && (
-                <NewFieldModal
+            {/* Field Modal */}
+            {showFieldModal && selectedEntityId && (
+                <FieldModal
                     entityId={selectedEntityId}
                     entities={currentProject?.entities || []}
+                    initialValues={editingField}
                     onClose={() => {
-                        setShowNewField(false);
+                        setShowFieldModal(false);
+                        setEditingField(null);
                         setSelectedEntityId(null);
                     }}
-                    onCreate={handleNewField}
+                    onSave={handleSaveField}
                 />
             )}
 
@@ -419,14 +508,14 @@ function NewEntityModal({ onClose, onCreate }: any) {
     );
 }
 
-function NewFieldModal({ entityId, entities, onClose, onCreate }: any) {
-    const [name, setName] = useState('');
-    const [dataType, setDataType] = useState('String');
-    const [isRequired, setIsRequired] = useState(false);
-    const [isUnique, setIsUnique] = useState(false);
+function FieldModal({ entityId, entities, onClose, onSave, initialValues }: any) {
+    const [name, setName] = useState(initialValues?.name || '');
+    const [dataType, setDataType] = useState(initialValues?.dataType || 'String');
+    const [isRequired, setIsRequired] = useState(initialValues?.isRequired || false);
+    const [isUnique, setIsUnique] = useState(initialValues?.isUnique || false);
 
-    const [relatedEntityId, setRelatedEntityId] = useState('');
-    const [relationshipType, setRelationshipType] = useState('OneToMany');
+    const [relatedEntityId, setRelatedEntityId] = useState(initialValues?.relatedEntityId || '');
+    const [relationshipType, setRelationshipType] = useState(initialValues?.relationshipType || 'OneToMany');
 
     // Filter out current entity from potential relationship targets (optional)
     const availableTargets = entities.filter((e: Entity) => e.id !== entityId);
@@ -436,11 +525,10 @@ function NewFieldModal({ entityId, entities, onClose, onCreate }: any) {
         setRelatedEntityId(selectedId);
 
         // Auto-generate name if empty or default
-        if (selectedId) {
+        if (selectedId && !initialValues) {
             const selectedEntity = entities.find((ent: Entity) => ent.id === selectedId);
             if (selectedEntity && (!name || name === 'Name')) {
                 setName(`${selectedEntity.name}Id`);
-                // setDataType('Guid'); // Removed to prevent switching back from Relationship type
             }
         }
     };
@@ -448,7 +536,7 @@ function NewFieldModal({ entityId, entities, onClose, onCreate }: any) {
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
-                <h2>Новое поле</h2>
+                <h2>{initialValues ? 'Редактировать поле' : 'Новое поле'}</h2>
                 <div className="form-group">
                     <label>Название</label>
                     <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
@@ -503,19 +591,19 @@ function NewFieldModal({ entityId, entities, onClose, onCreate }: any) {
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button
                         className="btn btn-primary"
-                        onClick={() => onCreate(entityId, {
+                        onClick={() => onSave(entityId, {
                             name,
                             dataType,
                             isRequired,
                             isUnique,
-                            isPrimaryKey: false,
-                            displayOrder: 0,
+                            isPrimaryKey: initialValues?.isPrimaryKey || false,
+                            displayOrder: initialValues?.displayOrder || 0,
                             relatedEntityId: dataType === 'Relationship' ? relatedEntityId : undefined,
                             relationshipType: dataType === 'Relationship' ? relationshipType : undefined
                         })}
                         disabled={!name || (dataType === 'Relationship' && !relatedEntityId)}
                     >
-                        Создать
+                        {initialValues ? 'Сохранить' : 'Создать'}
                     </button>
                     <button className="btn btn-secondary" onClick={onClose}>Отмена</button>
                 </div>

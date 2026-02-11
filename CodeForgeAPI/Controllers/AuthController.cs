@@ -92,7 +92,8 @@ public class AuthController : ControllerBase
             firstName = result.FirstName,
             lastName = result.LastName,
             avatarUrl = result.AvatarUrl,
-            role = result.Role
+            role = result.Role,
+            isDarkMode = result.IsDarkMode
         });
     }
     
@@ -119,7 +120,8 @@ public class AuthController : ControllerBase
             firstName = result.FirstName,
             lastName = result.LastName,
             avatarUrl = result.AvatarUrl,
-            role = result.Role
+            role = result.Role,
+            isDarkMode = result.IsDarkMode
         });
     }
 
@@ -207,7 +209,8 @@ public class AuthController : ControllerBase
             firstName = user.FirstName,
             lastName = user.LastName,
             avatarUrl = user.AvatarUrl,
-            role = user.Role
+            role = user.Role,
+            isDarkMode = user.IsDarkMode
         });
     }
 }
