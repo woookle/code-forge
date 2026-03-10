@@ -143,7 +143,7 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("Database migrated successfully");
         
         // Seed Admin User
-        var adminEmail = "admin@admin.com";
+        var adminEmail = "admin@codeforge.ru";
         var adminUser = dbContext.Users.FirstOrDefault(u => u.Email == adminEmail);
         
         if (adminUser == null)

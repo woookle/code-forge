@@ -10,7 +10,7 @@ namespace CodeForgeAPI.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin")] 
+[Authorize]
 public class UsersController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
@@ -26,6 +26,11 @@ public class UsersController : ControllerBase
     [HttpPost("{id}/avatar")]
     public async Task<IActionResult> UploadUserAvatar(Guid id, IFormFile file)
     {
+        if (!IsAuthorizedToModifyUser(id))
+        {
+            return Forbid();
+        }
+
         if (file == null || file.Length == 0)
             return BadRequest("No file uploaded");
 
@@ -74,6 +79,11 @@ public class UsersController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest request)
     {
+        if (!IsAuthorizedToModifyUser(id))
+        {
+            return Forbid();
+        }
+
         var user = await _context.Users.FindAsync(id);
         if (user == null)
         {
@@ -95,6 +105,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IEnumerable<User>>> GetUsers()
     {
         return await _context.Users
@@ -130,6 +141,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteUser(Guid id)
     {
         var user = await _context.Users.FindAsync(id);
@@ -148,5 +160,21 @@ public class UsersController : ControllerBase
         await _context.SaveChangesAsync();
 
         return NoContent();
+    }
+
+    private bool IsAuthorizedToModifyUser(Guid userId)
+    {
+        // Admin can modify anyone
+        if (User.IsInRole("Admin")) 
+            return true;
+
+        // User can modify themselves
+        var currentUserIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+        if (currentUserIdClaim != null && Guid.TryParse(currentUserIdClaim.Value, out var currentUserId))
+        {
+            return currentUserId == userId;
+        }
+
+        return false;
     }
 }
