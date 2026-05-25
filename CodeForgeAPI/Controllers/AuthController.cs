@@ -93,20 +93,29 @@ public class AuthController : ControllerBase
             lastName = result.LastName,
             avatarUrl = result.AvatarUrl,
             role = result.Role,
-            isDarkMode = result.IsDarkMode
+            isDarkMode = result.IsDarkMode,
+            twoFactorEnabled = result.TwoFactorEnabled
         });
     }
     
     [HttpPost("login")]
     public async Task<ActionResult<object>> Login([FromBody] LoginRequest request)
     {
-        // ModelState.IsValid check is implicitly handled by [ApiController] for simple cases.
-        
         var result = await _authService.LoginAsync(request);
         
         if (result == null)
         {
             return Unauthorized(new { message = "Invalid email or password" });
+        }
+
+        // If 2FA is required, return a special flag without setting the cookie
+        if (result.TwoFactorEnabled && string.IsNullOrEmpty(result.Token))
+        {
+            return Ok(new
+            {
+                requiresTwoFactor = true,
+                email = result.Email
+            });
         }
         
         // Set JWT token in httpOnly cookie
@@ -121,8 +130,80 @@ public class AuthController : ControllerBase
             lastName = result.LastName,
             avatarUrl = result.AvatarUrl,
             role = result.Role,
-            isDarkMode = result.IsDarkMode
+            isDarkMode = result.IsDarkMode,
+            twoFactorEnabled = result.TwoFactorEnabled
         });
+    }
+
+    [HttpPost("login-2fa")]
+    public async Task<ActionResult<object>> LoginWith2FA([FromBody] LoginWith2FARequest request)
+    {
+        Console.WriteLine($"[LoginWith2FA] Email={request.Email}, TotpCode={request.TotpCode}, PasswordLen={request.Password?.Length}");
+        var result = await _authService.LoginWithTotpAsync(request);
+
+        if (result == null)
+        {
+            Console.WriteLine($"[LoginWith2FA] Failed for {request.Email}");
+            return Unauthorized(new { message = "Неверный код. Проверьте код в Google Authenticator и попробуйте снова." });
+        }
+
+        // Set JWT token in httpOnly cookie
+        SetTokenCookie(result.Token);
+
+        return Ok(new
+        {
+            id = result.Id,
+            email = result.Email,
+            firstName = result.FirstName,
+            lastName = result.LastName,
+            avatarUrl = result.AvatarUrl,
+            role = result.Role,
+            isDarkMode = result.IsDarkMode,
+            twoFactorEnabled = result.TwoFactorEnabled
+        });
+    }
+
+    [Authorize]
+    [HttpPost("2fa/setup")]
+    public async Task<IActionResult> SetupTwoFactor()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        var result = await _authService.GenerateTwoFactorSetupAsync(Guid.Parse(userId));
+        if (result == null) return NotFound(new { message = "User not found" });
+
+        return Ok(new
+        {
+            qrCodeBase64 = result.QrCodeBase64,
+            manualEntryKey = result.ManualEntryKey
+        });
+    }
+
+    [Authorize]
+    [HttpPost("2fa/enable")]
+    public async Task<IActionResult> EnableTwoFactor([FromBody] Verify2FARequest request)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        var result = await _authService.EnableTwoFactorAsync(Guid.Parse(userId), request.Code);
+        if (!result) return BadRequest(new { message = "Invalid TOTP code. Please check the code in your authenticator app." });
+
+        return Ok(new { message = "Two-factor authentication enabled successfully" });
+    }
+
+    [Authorize]
+    [HttpPost("2fa/disable")]
+    public async Task<IActionResult> DisableTwoFactor([FromBody] Verify2FARequest request)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        var result = await _authService.DisableTwoFactorAsync(Guid.Parse(userId), request.Code);
+        if (!result) return BadRequest(new { message = "Invalid TOTP code. Please check the code in your authenticator app." });
+
+        return Ok(new { message = "Two-factor authentication disabled successfully" });
     }
 
     [HttpPost("avatar")]
@@ -210,7 +291,8 @@ public class AuthController : ControllerBase
             lastName = user.LastName,
             avatarUrl = user.AvatarUrl,
             role = user.Role,
-            isDarkMode = user.IsDarkMode
+            isDarkMode = user.IsDarkMode,
+            twoFactorEnabled = user.TwoFactorEnabled
         });
     }
 }

@@ -6,10 +6,11 @@ import { ClipLoader } from 'react-spinners';
 import VerificationModal from './VerificationModal';
 import ResetPasswordModal from './ResetPasswordModal';
 import PersonalDataModal from './PersonalDataModal';
+import TotpModal from './TotpModal';
 
 function Login() {
     const dispatch = useAppDispatch();
-    const { loading, error } = useAppSelector((state) => state.auth);
+    const { loading, error, requiresTwoFactor, pendingTwoFactorEmail, pendingTwoFactorPassword } = useAppSelector((state) => state.auth);
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -34,9 +35,7 @@ function Login() {
             await dispatch(register({ email, password, firstName, lastName, code })).unwrap();
             toast.success('Регистрация успешна!');
             setShowVerification(false);
-            // Login handled by redux
         } catch (err) {
-            // Error handled by redux
             toast.error('Ошибка регистрации. Возможно, неверный код.');
             throw err;
         }
@@ -46,9 +45,9 @@ function Login() {
         e.preventDefault();
 
         if (isLogin) {
+            // Password is passed inside the action and stored in Redux upon requiresTwoFactor
             dispatch(login({ email, password }));
         } else {
-            // Send verification code first
             try {
                 // @ts-ignore
                 const action = await dispatch(sendVerificationCode(email));
@@ -107,8 +106,6 @@ function Login() {
                             required
                         />
                     </div>
-
-
 
                     <div className="form-group">
                         <label>Пароль</label>
@@ -201,6 +198,15 @@ function Login() {
             {showPersonalDataModal && (
                 <PersonalDataModal
                     onClose={() => setShowPersonalDataModal(false)}
+                />
+            )}
+
+            {/* 2FA TOTP Modal — shown when server requires two-factor auth */}
+            {requiresTwoFactor && pendingTwoFactorEmail && pendingTwoFactorPassword && (
+                <TotpModal
+                    email={pendingTwoFactorEmail}
+                    password={pendingTwoFactorPassword}
+                    onClose={() => {}}
                 />
             )}
         </div>

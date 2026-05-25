@@ -27,6 +27,7 @@ public class AuthResponse
     public string? AvatarUrl { get; set; }
     public string Role { get; set; } = "User";
     public bool IsDarkMode { get; set; }
+    public bool TwoFactorEnabled { get; set; }
 }
 
 public class ForgotPasswordRequest
@@ -39,4 +40,27 @@ public class ResetPasswordRequest
     public string Email { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
     public string NewPassword { get; set; } = string.Empty;
+}
+
+public class Enable2FAResponse
+{
+    public string QrCodeBase64 { get; set; } = string.Empty;
+    public string ManualEntryKey { get; set; } = string.Empty;
+}
+
+public class Verify2FARequest
+{
+    public string Code { get; set; } = string.Empty;
+}
+
+public class LoginWith2FARequest
+{
+    public string Email { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public string TotpCode { get; set; } = string.Empty;
+}
+
+public class LoginCheckResponse
+{
+    public bool RequiresTwoFactor { get; set; }
 }

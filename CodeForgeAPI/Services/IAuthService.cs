@@ -11,4 +11,8 @@ public interface IAuthService
     Task<bool> SendVerificationCodeAsync(string email);
     Task<bool> SendPasswordResetCodeAsync(string email);
     Task<bool> ResetPasswordAsync(string email, string code, string newPassword);
+    Task<Enable2FAResponse?> GenerateTwoFactorSetupAsync(Guid userId);
+    Task<bool> EnableTwoFactorAsync(Guid userId, string code);
+    Task<bool> DisableTwoFactorAsync(Guid userId, string code);
+    Task<AuthResponse?> LoginWithTotpAsync(LoginWith2FARequest request);
 }

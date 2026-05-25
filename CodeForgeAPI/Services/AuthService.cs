@@ -7,6 +7,8 @@ using Microsoft.IdentityModel.Tokens;
 using CodeForgeAPI.Data;
 using CodeForgeAPI.DTOs.Auth;
 using CodeForgeAPI.Models;
+using OtpNet;
+using QRCoder;
 
 namespace CodeForgeAPI.Services;
 
@@ -126,7 +128,8 @@ public class AuthService : IAuthService
             LastName = user.LastName,
             AvatarUrl = user.AvatarUrl,
             Role = user.Role,
-            IsDarkMode = user.IsDarkMode
+            IsDarkMode = user.IsDarkMode,
+            TwoFactorEnabled = user.TwoFactorEnabled
         };
     }
 
@@ -147,20 +150,78 @@ public class AuthService : IAuthService
         {
             return null;
         }
+
+        // If 2FA is enabled, return a special response indicating TOTP is required
+        if (user.TwoFactorEnabled)
+        {
+            return new AuthResponse
+            {
+                Id = user.Id,
+                Token = string.Empty, // No token yet - requires TOTP verification
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                AvatarUrl = user.AvatarUrl,
+                Role = user.Role,
+                IsDarkMode = user.IsDarkMode,
+                TwoFactorEnabled = true
+            };
+        }
         
         // Generate token
-        var token = GenerateJwtToken(user);
+        var jwtToken = GenerateJwtToken(user);
         
         return new AuthResponse
         {
             Id = user.Id,
-            Token = token,
+            Token = jwtToken,
             Email = user.Email,
             FirstName = user.FirstName,
             LastName = user.LastName,
             AvatarUrl = user.AvatarUrl,
             Role = user.Role,
-            IsDarkMode = user.IsDarkMode
+            IsDarkMode = user.IsDarkMode,
+            TwoFactorEnabled = user.TwoFactorEnabled
+        };
+    }
+
+    public async Task<AuthResponse?> LoginWithTotpAsync(LoginWith2FARequest request)
+    {
+        // Find user
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+        if (user == null) return null;
+
+        // Verify password
+        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+            return null;
+
+        // Check 2FA is enabled and secret exists
+        if (!user.TwoFactorEnabled || string.IsNullOrEmpty(user.TwoFactorSecret))
+            return null;
+
+        // Verify TOTP code (trim whitespace just in case)
+        var trimmedCode = request.TotpCode?.Trim() ?? string.Empty;
+        var secretBytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+        var totp = new Totp(secretBytes, step: 30, mode: OtpHashMode.Sha1, totpSize: 6);
+        // Window of 5 allows ±150 seconds clock skew
+        bool isValid = totp.VerifyTotp(trimmedCode, out long matchedStep, new VerificationWindow(5, 5));
+        Console.WriteLine($"[LoginWithTotp] Code={trimmedCode}, Valid={isValid}, MatchedStep={matchedStep}");
+        if (!isValid) return null;
+
+        // Generate JWT token
+        var jwtToken = GenerateJwtToken(user);
+
+        return new AuthResponse
+        {
+            Id = user.Id,
+            Token = jwtToken,
+            Email = user.Email,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            AvatarUrl = user.AvatarUrl,
+            Role = user.Role,
+            IsDarkMode = user.IsDarkMode,
+            TwoFactorEnabled = user.TwoFactorEnabled
         };
     }
     
@@ -243,6 +304,83 @@ public class AuthService : IAuthService
         
         await _context.SaveChangesAsync();
         
+        return true;
+    }
+
+    public async Task<Enable2FAResponse?> GenerateTwoFactorSetupAsync(Guid userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return null;
+
+        // Generate a new Base32 secret key (20 bytes = 160 bits)
+        var secretBytes = KeyGeneration.GenerateRandomKey(20);
+        var base32Secret = Base32Encoding.ToString(secretBytes);
+
+        // Store secret temporarily (will be confirmed when user verifies the code)
+        user.TwoFactorSecret = base32Secret;
+        await _context.SaveChangesAsync();
+
+        // Build label for Google Authenticator: "CodeForge: {name or email}"
+        var displayName = !string.IsNullOrEmpty(user.FirstName)
+            ? $"{user.FirstName} {user.LastName}".Trim()
+            : user.Email;
+        var label = Uri.EscapeDataString($"CodeForge: {displayName}");
+        var issuer = Uri.EscapeDataString("CodeForge");
+
+        // otpauth URI format for Google Authenticator
+        var otpauthUri = $"otpauth://totp/{label}?secret={base32Secret}&issuer={issuer}&digits=6&period=30";
+
+        // Generate QR code as Base64 PNG
+        using var qrGenerator = new QRCodeGenerator();
+        var qrCodeData = qrGenerator.CreateQrCode(otpauthUri, QRCodeGenerator.ECCLevel.Q);
+        using var qrCode = new PngByteQRCode(qrCodeData);
+        var qrCodeBytes = qrCode.GetGraphic(10);
+        var qrCodeBase64 = $"data:image/png;base64,{Convert.ToBase64String(qrCodeBytes)}";
+
+        return new Enable2FAResponse
+        {
+            QrCodeBase64 = qrCodeBase64,
+            ManualEntryKey = base32Secret
+        };
+    }
+
+    public async Task<bool> EnableTwoFactorAsync(Guid userId, string code)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null || string.IsNullOrEmpty(user.TwoFactorSecret)) return false;
+
+        // Verify TOTP code (trim whitespace just in case)
+        var trimmedVerifyCode = code?.Trim() ?? string.Empty;
+        var secretBytesVerify = Base32Encoding.ToBytes(user.TwoFactorSecret);
+        var totpVerify = new Totp(secretBytesVerify, step: 30, mode: OtpHashMode.Sha1, totpSize: 6);
+        bool isValidVerify = totpVerify.VerifyTotp(trimmedVerifyCode, out long verifyMatchedStep, new VerificationWindow(5, 5));
+        Console.WriteLine($"[EnableTwoFactor] Code={trimmedVerifyCode}, Valid={isValidVerify}");
+
+        if (!isValidVerify) return false;
+
+        // Enable 2FA - secret is already stored
+        user.TwoFactorEnabled = true;
+        await _context.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> DisableTwoFactorAsync(Guid userId, string code)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null || !user.TwoFactorEnabled || string.IsNullOrEmpty(user.TwoFactorSecret)) return false;
+
+        // Verify TOTP code
+        var trimmedDisableCode = code?.Trim() ?? string.Empty;
+        var secretBytesDisable = Base32Encoding.ToBytes(user.TwoFactorSecret);
+        var totpDisable = new Totp(secretBytesDisable, step: 30, mode: OtpHashMode.Sha1, totpSize: 6);
+        bool isValidDisable = totpDisable.VerifyTotp(trimmedDisableCode, out _, new VerificationWindow(5, 5));
+
+        if (!isValidDisable) return false;
+
+        // Disable 2FA and remove secret
+        user.TwoFactorEnabled = false;
+        user.TwoFactorSecret = null;
+        await _context.SaveChangesAsync();
         return true;
     }
 

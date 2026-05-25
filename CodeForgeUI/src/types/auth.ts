@@ -8,6 +8,7 @@ export interface User {
     avatarUrl?: string;
     role: string;
     isDarkMode?: boolean;
+    twoFactorEnabled?: boolean;
     projects?: Project[];
     createdAt?: string;
 }
@@ -49,4 +50,15 @@ export interface UpdateUserRequest {
     lastName?: string;
     avatarUrl?: string;
     isDarkMode?: boolean;
+}
+
+export interface Enable2FAResponse {
+    qrCodeBase64: string;
+    manualEntryKey: string;
+}
+
+export interface LoginWith2FARequest {
+    email: string;
+    password: string;
+    totpCode: string;
 }

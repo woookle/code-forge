@@ -32,6 +32,11 @@ public class User
 
     public bool IsDarkMode { get; set; } = false;
 
+    public bool TwoFactorEnabled { get; set; } = false;
+
+    [MaxLength(500)]
+    public string? TwoFactorSecret { get; set; }
+
     // Navigation properties
     public ICollection<Project> Projects { get; set; } = new List<Project>();
 }
