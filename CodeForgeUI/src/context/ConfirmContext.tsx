@@ -66,7 +66,7 @@ export const ConfirmProvider: React.FC<{ children: ReactNode }> = ({ children })
 export const useConfirm = () => {
     const context = useContext(ConfirmContext);
     if (!context) {
-        throw new Error('useConfirm must be used within a ConfirmProvider');
+        throw new Error('useConfirm должен использоваться внутри ConfirmProvider');
     }
     return context;
 };

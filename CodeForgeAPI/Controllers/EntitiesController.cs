@@ -20,10 +20,21 @@ public class EntitiesController : ControllerBase
     {
         _context = context;
     }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return claim != null && Guid.TryParse(claim, out var id) ? id : Guid.Empty;
+    }
     
     [HttpGet("project/{projectId}")]
     public async Task<ActionResult<IEnumerable<Entity>>> GetEntitiesByProject(Guid projectId)
     {
+        var userId = GetCurrentUserId();
+        var projectOwned = await _context.Projects
+            .AnyAsync(p => p.Id == projectId && p.UserId == userId);
+        if (!projectOwned) return NotFound();
+
         var entities = await _context.Entities
             .Where(e => e.ProjectId == projectId)
             .Include(e => e.Fields)
@@ -36,14 +47,14 @@ public class EntitiesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<Entity>> GetEntity(Guid id)
     {
+        var userId = GetCurrentUserId();
         var entity = await _context.Entities
             .Include(e => e.Fields)
+            .Include(e => e.Project)
             .FirstOrDefaultAsync(e => e.Id == id);
         
-        if (entity == null)
-        {
+        if (entity == null || entity.Project.UserId != userId)
             return NotFound();
-        }
         
         return Ok(entity);
     }
@@ -51,17 +62,19 @@ public class EntitiesController : ControllerBase
     [HttpPost("project/{projectId}")]
     public async Task<ActionResult<Entity>> CreateEntity(Guid projectId, [FromBody] CreateEntityRequest request)
     {
-        // Validate entity name
-        var project = await _context.Projects.FindAsync(projectId);
+        var userId = GetCurrentUserId();
+        var project = await _context.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId);
         if (project == null)
-        {
             return NotFound("Project not found");
-        }
         
         if (!NameValidator.IsValidIdentifier(request.Name, project.TargetStack))
-        {
             return BadRequest($"Invalid entity name '{request.Name}'. Must be a valid identifier.");
-        }
+
+        var duplicate = await _context.Entities
+            .AnyAsync(e => e.ProjectId == projectId && e.Name == request.Name);
+        if (duplicate)
+            return Conflict($"An entity named '{request.Name}' already exists in this project.");
         
         var entity = new Entity
         {
@@ -70,6 +83,7 @@ public class EntitiesController : ControllerBase
             Name = request.Name,
             Description = request.Description,
             DisplayOrder = request.DisplayOrder,
+            ServiceName = string.IsNullOrWhiteSpace(request.ServiceName) ? null : request.ServiceName.Trim(),
             CreatedAt = DateTime.UtcNow
         };
         
@@ -82,23 +96,29 @@ public class EntitiesController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateEntity(Guid id, [FromBody] UpdateEntityRequest request)
     {
+        var userId = GetCurrentUserId();
         var existingEntity = await _context.Entities
             .Include(e => e.Project)
             .FirstOrDefaultAsync(e => e.Id == id);
         
-        if (existingEntity == null)
-        {
+        if (existingEntity == null || existingEntity.Project.UserId != userId)
             return NotFound();
-        }
         
         if (!NameValidator.IsValidIdentifier(request.Name, existingEntity.Project.TargetStack))
-        {
             return BadRequest($"Invalid entity name '{request.Name}'. Must be a valid identifier.");
+
+        if (existingEntity.Name != request.Name)
+        {
+            var duplicate = await _context.Entities
+                .AnyAsync(e => e.ProjectId == existingEntity.ProjectId && e.Name == request.Name && e.Id != id);
+            if (duplicate)
+                return Conflict($"An entity named '{request.Name}' already exists in this project.");
         }
         
         existingEntity.Name = request.Name;
         existingEntity.Description = request.Description;
         existingEntity.DisplayOrder = request.DisplayOrder;
+        existingEntity.ServiceName = string.IsNullOrWhiteSpace(request.ServiceName) ? null : request.ServiceName.Trim();
         
         await _context.SaveChangesAsync();
         
@@ -108,21 +128,31 @@ public class EntitiesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteEntity(Guid id)
     {
-        var entity = await _context.Entities.FindAsync(id);
+        var userId = GetCurrentUserId();
+        var entity = await _context.Entities
+            .Include(e => e.Project)
+            .FirstOrDefaultAsync(e => e.Id == id);
         
-        if (entity == null)
-        {
+        if (entity == null || entity.Project.UserId != userId)
             return NotFound();
-        }
         
-        // Find and delete fields in other entities that reference this entity
+        // Remove Relationship rows where this entity is source or target
+        var relationships = await _context.Relationships
+            .Where(r => r.SourceEntityId == id || r.TargetEntityId == id)
+            .ToListAsync();
+        
+        if (relationships.Any())
+            _context.Relationships.RemoveRange(relationships);
+
+        // Null out FK references in other entities' fields (SetNull — don't delete sibling fields)
         var referencingFields = await _context.Fields
             .Where(f => f.RelatedEntityId == id)
             .ToListAsync();
             
-        if (referencingFields.Any())
+        foreach (var field in referencingFields)
         {
-            _context.Fields.RemoveRange(referencingFields);
+            field.RelatedEntityId = null;
+            field.RelationshipType = null;
         }
 
         _context.Entities.Remove(entity);

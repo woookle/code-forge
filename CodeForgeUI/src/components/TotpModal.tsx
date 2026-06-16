@@ -17,7 +17,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
     const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
     useEffect(() => {
-        // Auto-focus first input
+        // Автофокус на первое поле ввода
         setTimeout(() => inputRefs.current[0]?.focus(), 100);
     }, []);
 
@@ -29,7 +29,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
         newDigits[index] = digit;
         setDigits(newDigits);
 
-        // Move to next input automatically
+        // Автоматически переходим к следующему полю
         if (digit && index < 5) {
             inputRefs.current[index + 1]?.focus();
         }
@@ -78,7 +78,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
         }
         try {
             await dispatch(loginWith2FA({ email, password, totpCode: code })).unwrap();
-            // Success — redux sets isAuthenticated, modal unmounts automatically
+            // Успех — Redux устанавливает isAuthenticated, модал закроется автоматически
         } catch (err: any) {
             toast.error(err || 'Неверный код. Попробуйте ещё раз.');
             setDigits(['', '', '', '', '', '']);
@@ -102,7 +102,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
                 onClick={(e) => e.stopPropagation()}
                 style={{ maxWidth: '420px', width: '90%', textAlign: 'center', padding: '2.5rem 2rem' }}
             >
-                {/* Shield icon */}
+                {/* Иконка щита */}
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }}>
                     <div style={{
                         width: '68px',
@@ -128,7 +128,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
                     <strong style={{ color: 'var(--text-primary)' }}>Google Authenticator</strong>
                 </p>
 
-                {/* 6 separate digit inputs */}
+                {/* 6 отдельных полей для каждой цифры кода */}
                 <div
                     style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '2rem' }}
                     onPaste={handlePaste}
@@ -162,7 +162,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
                                     boxSizing: 'border-box'
                                 }}
                             />
-                            {/* Visual separator between groups */}
+                            {/* Визуальный разделитель между группами цифр */}
                             {index === 2 && (
                                 <div style={{
                                     display: 'flex',
@@ -180,7 +180,7 @@ const TotpModal: React.FC<TotpModalProps> = ({ email, password, onClose }) => {
                     ))}
                 </div>
 
-                {/* Buttons */}
+                {/* Кнопки */}
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button
                         onClick={handleClose}

@@ -16,6 +16,10 @@ public class Entity
     public string? Description { get; set; }
     
     public int DisplayOrder { get; set; }
+
+    /// <summary>Microservice group name. Null = use entity name as service name.</summary>
+    [MaxLength(100)]
+    public string? ServiceName { get; set; }
     
     public DateTime CreatedAt { get; set; }
     

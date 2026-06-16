@@ -11,6 +11,10 @@ public class CreateEntityRequest
     public string? Description { get; set; }
     
     public int DisplayOrder { get; set; } = 0;
+
+    /// <summary>Microservice group name. If null, defaults to the entity name.</summary>
+    [MaxLength(100)]
+    public string? ServiceName { get; set; }
 }
 
 public class UpdateEntityRequest
@@ -22,4 +26,8 @@ public class UpdateEntityRequest
     public string? Description { get; set; }
     
     public int DisplayOrder { get; set; } = 0;
+
+    /// <summary>Microservice group name. If null, defaults to the entity name.</summary>
+    [MaxLength(100)]
+    public string? ServiceName { get; set; }
 }

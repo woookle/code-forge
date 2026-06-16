@@ -1,15 +1,40 @@
 export type DataType =
     | 'String'
     | 'Integer'
+    | 'Float'
+    | 'Long'
+    | 'Decimal'
     | 'Boolean'
     | 'DateTime'
-    | 'Decimal'
     | 'Text'
-    | 'File'
     | 'Guid'
     | 'Relationship';
 
 export type TargetStack = 'CSharp_PostgreSQL' | 'NodeJS_MongoDB';
+
+export type ArchitectureType = 'Monolith' | 'Microservices';
+
+export interface EntityProtectionMethods {
+    get: boolean;
+    post: boolean;
+    put: boolean;
+    patch: boolean;
+    delete: boolean;
+}
+
+export interface AuthConfig {
+    enabled: boolean;
+    type?: string;
+    userIdentifier: 'email' | 'username' | 'both';
+    enableRoles: boolean;
+    roles: string[];
+    enableRefreshTokens: boolean;
+    enableEmailVerification: boolean;
+    tokenExpiryMinutes: number;
+    refreshTokenExpiryDays: number;
+    /** Per-entity HTTP method protection map: entityName -> method flags */
+    entityProtection: Record<string, EntityProtectionMethods>;
+}
 
 export interface Project {
     id: string;
@@ -17,6 +42,8 @@ export interface Project {
     name: string;
     description?: string;
     targetStack: TargetStack;
+    architectureType: ArchitectureType;
+    authConfig?: string | null;
     createdAt: string;
     updatedAt: string;
     entities?: Entity[];
@@ -39,6 +66,7 @@ export interface Entity {
     name: string;
     description?: string;
     displayOrder: number;
+    serviceName?: string | null;
     createdAt: string;
     fields?: Field[];
     sourceRelationships?: Relationship[];

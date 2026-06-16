@@ -17,7 +17,7 @@ export default function VerificationModal({ email, onClose, onConfirm }: Verific
         try {
             await onConfirm(code);
         } catch (error: any) {
-            // Error handled by parent
+            // Ошибка обрабатывается родительским компонентом
         } finally {
             setLoading(false);
         }

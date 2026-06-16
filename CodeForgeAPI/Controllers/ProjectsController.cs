@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.Json;
 using CodeForgeAPI.Data;
 using CodeForgeAPI.Models;
 using CodeForgeAPI.Services;
@@ -16,7 +17,15 @@ public class ProjectsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ICodeGeneratorService _codeGeneratorService;
-    
+
+    /// <summary>Shared camelCase options so authConfig JSON in DB matches the frontend's expectations</summary>
+    private static readonly JsonSerializerOptions _camelCaseOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false
+    };
+
     public ProjectsController(ApplicationDbContext context, ICodeGeneratorService codeGeneratorService)
     {
         _context = context;
@@ -76,6 +85,10 @@ public class ProjectsController : ControllerBase
             Name = request.Name,
             Description = request.Description,
             TargetStack = request.TargetStack,
+            ArchitectureType = request.ArchitectureType ?? "Monolith",
+            AuthConfig = request.AuthConfig != null
+                ? JsonSerializer.Serialize(request.AuthConfig, _camelCaseOptions)
+                : null,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -99,9 +112,16 @@ public class ProjectsController : ControllerBase
             return NotFound();
         }
         
-        existingProject.Name = request.Name;
-        existingProject.Description = request.Description;
-        existingProject.TargetStack = request.TargetStack;
+        if (request.Name != null) existingProject.Name = request.Name;
+        if (request.Description != null) existingProject.Description = request.Description;
+        if (request.TargetStack != null) existingProject.TargetStack = request.TargetStack;
+        if (request.ArchitectureType != null) existingProject.ArchitectureType = request.ArchitectureType;
+
+        if (request.AuthConfig != null)
+            existingProject.AuthConfig = JsonSerializer.Serialize(request.AuthConfig, _camelCaseOptions);
+        else if (request.ClearAuth)
+            existingProject.AuthConfig = null;
+
         existingProject.UpdatedAt = DateTime.UtcNow;
         
         await _context.SaveChangesAsync();

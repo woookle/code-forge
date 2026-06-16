@@ -5,7 +5,7 @@ import { LoginRequest, RegisterRequest, ResetPasswordRequest, User, Enable2FARes
 interface AuthState {
     isAuthenticated: boolean;
     user: User | null;
-    token: string | null; // Added token to state interface as it was missing but used in Profile
+    token: string | null;
     loading: boolean;
     error: string | null;
     requiresTwoFactor: boolean;
@@ -30,7 +30,7 @@ export const sendVerificationCode = createAsyncThunk<void, string, { rejectValue
         try {
             await api.post('/auth/send-code', { email });
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to send verification code');
+            return rejectWithValue(error.response?.data?.message || 'Не удалось отправить код подтверждения');
         }
     }
 );
@@ -41,7 +41,7 @@ export const forgotPassword = createAsyncThunk<void, string, { rejectValue: stri
         try {
             await api.post('/auth/forgot-password', { email });
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to send password reset code');
+            return rejectWithValue(error.response?.data?.message || 'Не удалось отправить код сброса пароля');
         }
     }
 );
@@ -52,7 +52,7 @@ export const resetPassword = createAsyncThunk<void, ResetPasswordRequest, { reje
         try {
             await api.post('/auth/reset-password', data);
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to reset password');
+            return rejectWithValue(error.response?.data?.message || 'Не удалось сбросить пароль');
         }
     }
 );
@@ -64,7 +64,7 @@ export const register = createAsyncThunk<User, RegisterRequest, { rejectValue: s
             const response = await api.post<User>('/auth/register', data);
             return response.data;
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Registration failed');
+            return rejectWithValue(error.response?.data?.message || 'Ошибка регистрации');
         }
     }
 );
@@ -79,12 +79,12 @@ export const login = createAsyncThunk<
         try {
             const response = await api.post('/auth/login', data);
             if (response.data.requiresTwoFactor) {
-                // Pass password so it can be stored in Redux for the 2FA step
+                // Пароль передаётся в Redux чтобы TotpModal мог его использовать на шаге 2FA
                 return { requiresTwoFactor: true, email: response.data.email, password: data.password };
             }
             return { user: response.data as User };
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Login failed');
+            return rejectWithValue(error.response?.data?.message || 'Ошибка входа');
         }
     }
 );
@@ -96,7 +96,7 @@ export const loginWith2FA = createAsyncThunk<User, LoginWith2FARequest, { reject
             const response = await api.post<User>('/auth/login-2fa', data);
             return response.data;
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Invalid TOTP code');
+            return rejectWithValue(error.response?.data?.message || 'Неверный TOTP-код');
         }
     }
 );
@@ -115,7 +115,7 @@ export const checkAuth = createAsyncThunk<User, void, { rejectValue: string }>(
             const response = await api.get<User>('/auth/me');
             return response.data;
         } catch (error: any) {
-            return rejectWithValue('Not authenticated');
+            return rejectWithValue('Не аутентифицирован');
         }
     });
 
@@ -125,7 +125,7 @@ export const verifyEmail = createAsyncThunk<void, { email: string; code: string 
         try {
             await api.post('/auth/verify', data);
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Verification failed');
+            return rejectWithValue(error.response?.data?.message || 'Ошибка подтверждения');
         }
     }
 );
@@ -138,7 +138,7 @@ export const updateUser = createAsyncThunk<User, { id: string; data: Partial<Use
             const response = await api.get<User>('/auth/me');
             return response.data;
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Update failed');
+            return rejectWithValue(error.response?.data?.message || 'Ошибка обновления');
         }
     }
 );
@@ -150,7 +150,7 @@ export const setup2FA = createAsyncThunk<Enable2FAResponse, void, { rejectValue:
             const response = await api.post<Enable2FAResponse>('/auth/2fa/setup');
             return response.data;
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to setup 2FA');
+            return rejectWithValue(error.response?.data?.message || 'Не удалось настроить 2FA');
         }
     }
 );
@@ -161,7 +161,7 @@ export const enable2FA = createAsyncThunk<void, string, { rejectValue: string }>
         try {
             await api.post('/auth/2fa/enable', { code });
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Invalid TOTP code');
+            return rejectWithValue(error.response?.data?.message || 'Неверный TOTP-код');
         }
     }
 );
@@ -172,7 +172,7 @@ export const disable2FA = createAsyncThunk<void, string, { rejectValue: string }
         try {
             await api.post('/auth/2fa/disable', { code });
         } catch (error: any) {
-            return rejectWithValue(error.response?.data?.message || 'Invalid TOTP code');
+            return rejectWithValue(error.response?.data?.message || 'Неверный код 2FA');
         }
     }
 );
@@ -195,7 +195,7 @@ const authSlice = createSlice({
     },
     extraReducers: (builder) => {
         builder
-            // Register
+            // Регистрация
             .addCase(register.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -209,7 +209,7 @@ const authSlice = createSlice({
                 state.loading = false;
                 state.error = action.payload as string;
             })
-            // Login
+            // Вход
             .addCase(login.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -219,7 +219,7 @@ const authSlice = createSlice({
                 if (action.payload.requiresTwoFactor) {
                     state.requiresTwoFactor = true;
                     state.pendingTwoFactorEmail = action.payload.email || null;
-                    // Store password in Redux so TotpModal can reliably use it
+                    // Сохраняем пароль в Redux чтобы TotpModal мог его использовать
                     state.pendingTwoFactorPassword = action.payload.password || null;
                 } else if (action.payload.user) {
                     state.isAuthenticated = true;
@@ -230,7 +230,7 @@ const authSlice = createSlice({
                 state.loading = false;
                 state.error = action.payload as string;
             })
-            // Login with 2FA
+            // Вход с 2FA
             .addCase(loginWith2FA.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -247,7 +247,7 @@ const authSlice = createSlice({
                 state.loading = false;
                 state.error = action.payload as string;
             })
-            // Logout
+            // Выход
             .addCase(logout.fulfilled, (state) => {
                 state.isAuthenticated = false;
                 state.user = null;
@@ -256,7 +256,7 @@ const authSlice = createSlice({
                 state.pendingTwoFactorEmail = null;
                 state.pendingTwoFactorPassword = null;
             })
-            // Check auth
+            // Проверка аутентификации
             .addCase(checkAuth.fulfilled, (state, action: PayloadAction<User>) => {
                 state.isAuthenticated = true;
                 state.user = action.payload;
@@ -265,17 +265,17 @@ const authSlice = createSlice({
                 state.isAuthenticated = false;
                 state.user = null;
             })
-            // Update User
+            // Обновление пользователя
             .addCase(updateUser.fulfilled, (state, action: PayloadAction<User>) => {
                 state.user = action.payload;
             })
-            // Enable 2FA
+            // Включение 2FA
             .addCase(enable2FA.fulfilled, (state) => {
                 if (state.user) {
                     state.user = { ...state.user, twoFactorEnabled: true };
                 }
             })
-            // Disable 2FA
+            // Отключение 2FA
             .addCase(disable2FA.fulfilled, (state) => {
                 if (state.user) {
                     state.user = { ...state.user, twoFactorEnabled: false };

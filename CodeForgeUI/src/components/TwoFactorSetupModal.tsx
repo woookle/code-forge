@@ -64,7 +64,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                 onClick={(e) => e.stopPropagation()}
                 style={{ maxWidth: '480px', width: '90%', padding: '2rem' }}
             >
-                {/* Header */}
+                {/* Заголовок */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '1.5rem' }}>
                     <div style={{
                         width: '46px',
@@ -109,7 +109,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                     </button>
                 </div>
 
-                {/* Step indicator */}
+                {/* Индикатор текущего шага */}
                 {step !== 'loading' && (
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '1.75rem' }}>
                         {[0, 1].map((i) => (
@@ -126,7 +126,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                     </div>
                 )}
 
-                {/* Loading */}
+                {/* Загрузка */}
                 {step === 'loading' && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem 0' }}>
                         <ClipLoader color="#6366f1" size={40} />
@@ -136,7 +136,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                     </div>
                 )}
 
-                {/* QR Step */}
+                {/* Шаг с QR-кодом */}
                 {step === 'qr' && setupData && (
                     <div>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.65, fontSize: '0.9rem' }}>
@@ -144,7 +144,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                             телефоне и отсканируйте QR-код:
                         </p>
 
-                        {/* QR Code */}
+                        {/* QR-код */}
                         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
                             <div style={{
                                 padding: '14px',
@@ -162,7 +162,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                             </div>
                         </div>
 
-                        {/* Manual entry key */}
+                        {/* Ручной ввод ключа */}
                         <div style={{
                             background: 'var(--bg-secondary)',
                             borderRadius: '10px',
@@ -231,7 +231,7 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
                     </div>
                 )}
 
-                {/* Verify Step */}
+                {/* Шаг подтверждения кода */}
                 {step === 'verify' && (
                     <div>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: 1.65, fontSize: '0.9rem' }}>

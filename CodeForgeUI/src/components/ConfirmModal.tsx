@@ -27,7 +27,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
         if (isOpen) {
             setVisible(true);
         } else {
-            const timer = setTimeout(() => setVisible(false), 300); // Wait for animation
+            const timer = setTimeout(() => setVisible(false), 300); // Ждём завершения анимации
             return () => clearTimeout(timer);
         }
     }, [isOpen]);

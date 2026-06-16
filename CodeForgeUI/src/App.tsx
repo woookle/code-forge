@@ -17,11 +17,11 @@ function App() {
     const [currentPage, setCurrentPage] = useState<Page>('dashboard');
 
     useEffect(() => {
-        // Check if user is authenticated on app load
+        // Проверяем аутентификацию при загрузке приложения
         dispatch(checkAuth());
     }, [dispatch]);
 
-    // Redirect or show not found if trying to access admin without role
+    // Перенаправление при попытке открыть admin без соответствующей роли
     useEffect(() => {
         if (currentPage === 'admin' && user?.role !== 'Admin') {
             setCurrentPage('dashboard');
@@ -29,7 +29,7 @@ function App() {
         }
     }, [currentPage, user]);
 
-    // Apply dark mode
+    // Применяем тёмную тему
     useEffect(() => {
         if (user?.isDarkMode) {
             document.body.classList.add('dark-mode');

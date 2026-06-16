@@ -177,7 +177,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseHttpsRedirection();
-app.UseStaticFiles(); // Enable static file serving for avatars
+app.UseStaticFiles();
 app.UseCors("AllowAll");
 
 app.UseAuthentication();

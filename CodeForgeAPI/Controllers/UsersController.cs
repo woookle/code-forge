@@ -118,23 +118,56 @@ public class UsersController : ControllerBase
                 Role = u.Role,
                 AvatarUrl = u.AvatarUrl,
                 IsDarkMode = u.IsDarkMode,
+                TwoFactorEnabled = u.TwoFactorEnabled,
                 CreatedAt = u.CreatedAt,
-                Projects = u.Projects.Select(p => new Project 
-                { 
-                    Id = p.Id, 
-                    Name = p.Name, 
-                    Description = p.Description, 
+                Projects = u.Projects.Select(p => new Project
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Description = p.Description,
                     TargetStack = p.TargetStack,
+                    ArchitectureType = p.ArchitectureType,
+                    AuthConfig = p.AuthConfig,
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
-                    Entities = p.Entities.Select(e => new Entity 
-                    { 
-                        Id = e.Id, 
-                        Name = e.Name, 
+                    Entities = p.Entities.Select(e => new Entity
+                    {
+                        Id = e.Id,
+                        Name = e.Name,
                         ProjectId = p.Id,
                         DisplayOrder = e.DisplayOrder,
-                        CreatedAt = e.CreatedAt
-                    }).ToList() 
+                        ServiceName = e.ServiceName,
+                        CreatedAt = e.CreatedAt,
+                        Fields = e.Fields.Select(f => new Field
+                        {
+                            Id = f.Id,
+                            Name = f.Name,
+                            DataType = f.DataType,
+                            IsRequired = f.IsRequired,
+                            IsUnique = f.IsUnique,
+                            IsPrimaryKey = f.IsPrimaryKey,
+                            DisplayOrder = f.DisplayOrder,
+                            EntityId = e.Id
+                        }).ToList(),
+                        SourceRelationships = e.SourceRelationships.Select(r => new Relationship
+                        {
+                            Id = r.Id,
+                            SourceEntityId = r.SourceEntityId,
+                            TargetEntityId = r.TargetEntityId,
+                            RelationshipType = r.RelationshipType,
+                            SourceFieldName = r.SourceFieldName,
+                            TargetFieldName = r.TargetFieldName
+                        }).ToList(),
+                        TargetRelationships = e.TargetRelationships.Select(r => new Relationship
+                        {
+                            Id = r.Id,
+                            SourceEntityId = r.SourceEntityId,
+                            TargetEntityId = r.TargetEntityId,
+                            RelationshipType = r.RelationshipType,
+                            SourceFieldName = r.SourceFieldName,
+                            TargetFieldName = r.TargetFieldName
+                        }).ToList()
+                    }).ToList()
                 }).ToList()
             })
             .ToListAsync();

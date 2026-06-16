@@ -45,7 +45,7 @@ function Login() {
         e.preventDefault();
 
         if (isLogin) {
-            // Password is passed inside the action and stored in Redux upon requiresTwoFactor
+            // Пароль передаётся в action и сохраняется в Redux для шага 2FA
             dispatch(login({ email, password }));
         } else {
             try {
@@ -201,7 +201,7 @@ function Login() {
                 />
             )}
 
-            {/* 2FA TOTP Modal — shown when server requires two-factor auth */}
+            {/* Модал TOTP — показывается когда сервер требует двухфакторную аутентификацию */}
             {requiresTwoFactor && pendingTwoFactorEmail && pendingTwoFactorPassword && (
                 <TotpModal
                     email={pendingTwoFactorEmail}

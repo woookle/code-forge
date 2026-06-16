@@ -18,8 +18,17 @@ public class Project
     [Required]
     [MaxLength(50)]
     public string TargetStack { get; set; } = "CSharp_PostgreSQL";
-    
+
+    /// <summary>Architecture type: Monolith (default) or Microservices</summary>
+    [Required]
+    [MaxLength(20)]
+    public string ArchitectureType { get; set; } = "Monolith";
+
+    /// <summary>JSON-serialized AuthConfig; null means auth is disabled</summary>
+    public string? AuthConfig { get; set; }
+
     public DateTime CreatedAt { get; set; }
+
     public DateTime UpdatedAt { get; set; }
     
     // Navigation properties

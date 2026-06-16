@@ -21,13 +21,13 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
     const [lastName, setLastName] = useState(user?.lastName || '');
     const [isDarkMode, setIsDarkMode] = useState(user?.isDarkMode || false);
 
-    // 2FA state
+    // Состояние 2FA
     const [show2FASetup, setShow2FASetup] = useState(false);
     const [showDisable2FA, setShowDisable2FA] = useState(false);
     const [disable2FACode, setDisable2FACode] = useState('');
     const [disabling2FA, setDisabling2FA] = useState(false);
 
-    // Sync local state when user data changes (e.g. after initial load)
+    // Синхронизируем локальное состояние при изменении данных пользователя (напр., после загрузки)
     React.useEffect(() => {
         if (user) {
             setFirstName(user.firstName || '');
@@ -113,7 +113,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
             <div className="login-card animate-slide-up" style={{ maxWidth: '600px' }}>
                 <h1>Профиль</h1>
 
-                {/* Avatar Section */}
+                {/* Секция аватара */}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '2rem' }}>
                     <div
                         onClick={handleAvatarClick}
@@ -213,7 +213,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                     </label>
                 </div>
 
-                {/* ── Security Section ── */}
+                {/* ── Раздел безопасности ── */}
                 <div style={{
                     borderTop: '1px solid var(--border-color)',
                     paddingTop: '1.5rem',
@@ -226,7 +226,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                         <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Безопасность</h3>
                     </div>
 
-                    {/* 2FA Row */}
+                    {/* Строка двухфакторной аутентификации */}
                     <div style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -286,7 +286,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                             </div>
                         </div>
 
-                        {/* Toggle button */}
+                        {/* Кнопка включения/отключения */}
                         {is2FAEnabled ? (
                             <button
                                 onClick={() => setShowDisable2FA(!showDisable2FA)}
@@ -306,7 +306,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                         )}
                     </div>
 
-                    {/* Disable 2FA form (inline) */}
+                    {/* Встроенная форма отключения 2FA */}
                     {showDisable2FA && is2FAEnabled && (
                         <form
                             onSubmit={handleDisable2FA}
@@ -389,7 +389,7 @@ const Profile: React.FC<ProfileProps> = ({ onNavigate }) => {
                 </div>
             </div>
 
-            {/* 2FA Setup Modal */}
+            {/* Модал настройки 2FA */}
             {show2FASetup && (
                 <TwoFactorSetupModal
                     onClose={() => setShow2FASetup(false)}
