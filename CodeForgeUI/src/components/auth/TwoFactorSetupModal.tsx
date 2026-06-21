@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useAppDispatch } from '../app/hooks';
-import { setup2FA, enable2FA } from '../features/auth/authSlice';
-import { Enable2FAResponse } from '../types/auth';
+import { useAppDispatch } from '../../app/hooks';
+import { setup2FA, enable2FA } from '../../features/auth/authSlice';
+import { Enable2FAResponse } from '../../types/auth';
 import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
+import { showAchievements } from '../common/AchievementToast';
 
 interface TwoFactorSetupModalProps {
     onClose: () => void;
@@ -41,8 +42,11 @@ const TwoFactorSetupModal: React.FC<TwoFactorSetupModalProps> = ({ onClose, onEn
         }
         setVerifying(true);
         try {
-            await dispatch(enable2FA(trimmedCode)).unwrap();
+            const newAchievements = await dispatch(enable2FA(trimmedCode)).unwrap();
             toast.success('Двухфакторная аутентификация включена!');
+            if (newAchievements.length > 0) {
+                showAchievements(newAchievements);
+            }
             onEnabled();
             onClose();
         } catch (err: any) {

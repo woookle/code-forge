@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useRef, ReactNode, useCallback } from 'react';
-import ConfirmModal from '../components/ConfirmModal';
+import ConfirmModal from '../components/common/ConfirmModal';
 
 interface ConfirmOptions {
     title?: string;

@@ -40,5 +40,9 @@ Desktop.ini
 **/*.json.user
 **/secrets.json
 
+# Локальные настройки с секретами (скопируйте appsettings.example.json → appsettings.json)
+CodeForgeAPI/appsettings.json
+CodeForgeAPI/appsettings.Development.local.json
+
 # Logs
 *.log

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useAppDispatch } from '../app/hooks';
-import { forgotPassword, resetPassword } from '../features/auth/authSlice';
+import { useAppDispatch } from '../../app/hooks';
+import { forgotPassword, resetPassword } from '../../features/auth/authSlice';
 import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
 

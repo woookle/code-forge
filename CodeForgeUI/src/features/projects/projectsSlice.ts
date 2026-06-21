@@ -3,6 +3,19 @@ import api from '../../utils/api';
 import { Project, AuthConfig } from '../../types';
 import { logout } from '../auth/authSlice';
 
+export interface AchievementUnlock {
+    id: string;
+    icon: string;
+    title: string;
+    description: string;
+    color: string;
+}
+
+interface CreateProjectResult {
+    project: Project;
+    newAchievements: AchievementUnlock[];
+}
+
 interface ProjectsState {
     projects: Project[];
     currentProject: Project | null;
@@ -28,8 +41,12 @@ export const fetchProjectById = createAsyncThunk('projects/fetchById', async (id
 });
 
 export const createProject = createAsyncThunk('projects/create', async (project: Partial<Project>) => {
-    const response = await api.post<Project>('/projects', project);
-    return response.data;
+    const response = await api.post<Project & { newAchievements?: AchievementUnlock[] }>('/projects', project);
+    const { newAchievements, ...projectData } = response.data;
+    return {
+        project: projectData as Project,
+        newAchievements: newAchievements ?? [],
+    } satisfies CreateProjectResult;
 });
 
 export const updateProject = createAsyncThunk(
@@ -91,7 +108,7 @@ const projectsSlice = createSlice({
                 state.currentProject = action.payload;
             })
             .addCase(createProject.fulfilled, (state, action) => {
-                state.projects.push(action.payload);
+                state.projects.push(action.payload.project);
             })
             .addCase(updateProjectAuth.fulfilled, (state, action) => {
                 const { id, authConfigJson } = action.payload;

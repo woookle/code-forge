@@ -80,7 +80,9 @@ public class FieldsController : ControllerBase
         
         _context.Fields.Add(field);
         await _context.SaveChangesAsync();
-        
+
+        await SyncRelationshipForFieldAsync(field);
+
         return CreatedAtAction(nameof(GetField), new { id = field.Id }, field);
     }
     
@@ -101,7 +103,9 @@ public class FieldsController : ControllerBase
         {
             return BadRequest($"Invalid field name '{request.Name}'. Must be a valid identifier.");
         }
-        
+
+        var previousFieldName = existingField.Name;
+
         existingField.Name = request.Name;
         existingField.DataType = request.DataType;
         existingField.IsRequired = request.IsRequired;
@@ -110,25 +114,81 @@ public class FieldsController : ControllerBase
         existingField.DisplayOrder = request.DisplayOrder;
         existingField.RelatedEntityId = request.RelatedEntityId;
         existingField.RelationshipType = request.RelationshipType;
-        
+
+        await SyncRelationshipForFieldAsync(existingField, previousFieldName);
         await _context.SaveChangesAsync();
-        
+
         return NoContent();
     }
-    
+
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteField(Guid id)
     {
         var field = await _context.Fields.FindAsync(id);
-        
+
         if (field == null)
         {
             return NotFound();
         }
-        
+
+        await RemoveRelationshipForFieldAsync(field);
         _context.Fields.Remove(field);
         await _context.SaveChangesAsync();
-        
+
         return NoContent();
+    }
+
+    private async Task SyncRelationshipForFieldAsync(Field field, string? previousFieldName = null)
+    {
+        var lookupName = previousFieldName ?? field.Name;
+        var existing = await _context.Relationships
+            .FirstOrDefaultAsync(r => r.SourceEntityId == field.EntityId && r.SourceFieldName == lookupName);
+
+        if (field.DataType != "Relationship" || !field.RelatedEntityId.HasValue)
+        {
+            if (existing != null)
+                _context.Relationships.Remove(existing);
+            return;
+        }
+
+        var sourceEntity = await _context.Entities.FindAsync(field.EntityId);
+        var targetEntity = await _context.Entities.FindAsync(field.RelatedEntityId.Value);
+        if (sourceEntity == null || targetEntity == null)
+            return;
+
+        var targetFieldName = field.RelationshipType == "OneToOne"
+            ? sourceEntity.Name
+            : $"{sourceEntity.Name}s";
+
+        if (existing != null)
+        {
+            existing.TargetEntityId = field.RelatedEntityId.Value;
+            existing.RelationshipType = field.RelationshipType ?? "OneToMany";
+            existing.SourceFieldName = field.Name;
+            existing.TargetFieldName = targetFieldName;
+            return;
+        }
+
+        _context.Relationships.Add(new Relationship
+        {
+            Id = Guid.NewGuid(),
+            SourceEntityId = field.EntityId,
+            TargetEntityId = field.RelatedEntityId.Value,
+            RelationshipType = field.RelationshipType ?? "OneToMany",
+            SourceFieldName = field.Name,
+            TargetFieldName = targetFieldName,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+
+    private async Task RemoveRelationshipForFieldAsync(Field field)
+    {
+        if (field.DataType != "Relationship") return;
+
+        var existing = await _context.Relationships
+            .FirstOrDefaultAsync(r => r.SourceEntityId == field.EntityId && r.SourceFieldName == field.Name);
+
+        if (existing != null)
+            _context.Relationships.Remove(existing);
     }
 }

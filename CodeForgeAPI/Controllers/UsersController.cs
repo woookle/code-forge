@@ -177,22 +177,77 @@ public class UsersController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteUser(Guid id)
     {
-        var user = await _context.Users.FindAsync(id);
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == id)
+            return BadRequest(new { message = "Нельзя удалить собственный аккаунт" });
+
+        var user = await _context.Users
+            .Include(u => u.Projects)
+            .FirstOrDefaultAsync(u => u.Id == id);
+
         if (user == null)
+            return NotFound(new { message = "Пользователь не найден" });
+
+        if (IsProtectedAdmin(user.Email))
+            return BadRequest(new { message = "Нельзя удалить главного администратора" });
+
+        var projectCount = user.Projects.Count;
+
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        try
         {
-            return NotFound();
-        }
+            // Токены верификации привязаны к email, а не к UserId
+            var tokens = await _context.VerificationTokens
+                .Where(t => t.Email == user.Email)
+                .ToListAsync();
+            if (tokens.Count > 0)
+                _context.VerificationTokens.RemoveRange(tokens);
 
-        // Prevent deleting the last admin or yourself if needed, but for now simple delete
-        if (user.Email == "admin@admin.com")
+            DeleteAvatarFile(user.AvatarUrl);
+
+            // Каскад через EF/PostgreSQL: Projects → Entities → Fields/Relationships,
+            // а также GenerationHistories, UserAchievements, AccountActivities
+            _context.Users.Remove(user);
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return Ok(new
+            {
+                message = "Пользователь и все связанные данные удалены",
+                deletedProjects = projectCount,
+            });
+        }
+        catch (Exception ex)
         {
-             return BadRequest("Cannot delete the main admin user.");
+            await transaction.RollbackAsync();
+            Console.WriteLine($"[DeleteUser] Error: {ex.Message}");
+            return StatusCode(500, new { message = "Ошибка при удалении пользователя" });
         }
+    }
 
-        _context.Users.Remove(user);
-        await _context.SaveChangesAsync();
+    private static bool IsProtectedAdmin(string email) =>
+        email.Equals("admin@codeforge.ru", StringComparison.OrdinalIgnoreCase) ||
+        email.Equals("admin@admin.com", StringComparison.OrdinalIgnoreCase);
 
-        return NoContent();
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return claim != null && Guid.TryParse(claim, out var id) ? id : Guid.Empty;
+    }
+
+    private void DeleteAvatarFile(string? avatarUrl)
+    {
+        if (string.IsNullOrEmpty(avatarUrl)) return;
+
+        var webRoot = string.IsNullOrEmpty(_env.WebRootPath)
+            ? Path.Combine(_env.ContentRootPath, "wwwroot")
+            : _env.WebRootPath;
+
+        var avatarPath = Path.Combine(webRoot, avatarUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+        if (System.IO.File.Exists(avatarPath))
+        {
+            try { System.IO.File.Delete(avatarPath); } catch { }
+        }
     }
 
     private bool IsAuthorizedToModifyUser(Guid userId)

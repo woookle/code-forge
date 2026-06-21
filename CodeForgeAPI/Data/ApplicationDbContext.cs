@@ -16,6 +16,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<Field> Fields { get; set; } = null!;
     public DbSet<Relationship> Relationships { get; set; } = null!;
     public DbSet<VerificationToken> VerificationTokens { get; set; } = null!;
+    public DbSet<GenerationHistory> GenerationHistories { get; set; } = null!;
+    public DbSet<UserAchievement> UserAchievements { get; set; } = null!;
+    public DbSet<AccountActivity> AccountActivities { get; set; } = null!;
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -93,6 +96,51 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.TargetEntity)
                 .WithMany(ent => ent.TargetRelationships)
                 .HasForeignKey(e => e.TargetEntityId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // GenerationHistory configuration
+        modelBuilder.Entity<GenerationHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.ProjectId);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // UserAchievement configuration
+        modelBuilder.Entity<UserAchievement>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.UserId, e.AchievementId }).IsUnique();
+            entity.Property(e => e.UnlockedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AccountActivity configuration
+        modelBuilder.Entity<AccountActivity>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.UserId);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

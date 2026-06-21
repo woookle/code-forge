@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import api from '../../utils/api';
-import { LoginRequest, RegisterRequest, ResetPasswordRequest, User, Enable2FAResponse, LoginWith2FARequest } from '../../types/auth';
+import { LoginRequest, RegisterRequest, ResetPasswordRequest, User, Enable2FAResponse, LoginWith2FARequest, AchievementUnlock } from '../../types/auth';
 
 interface AuthState {
     isAuthenticated: boolean;
@@ -155,11 +155,12 @@ export const setup2FA = createAsyncThunk<Enable2FAResponse, void, { rejectValue:
     }
 );
 
-export const enable2FA = createAsyncThunk<void, string, { rejectValue: string }>(
+export const enable2FA = createAsyncThunk<AchievementUnlock[], string, { rejectValue: string }>(
     'auth/enable2FA',
     async (code, { rejectWithValue }) => {
         try {
-            await api.post('/auth/2fa/enable', { code });
+            const response = await api.post<{ newAchievements?: AchievementUnlock[] }>('/auth/2fa/enable', { code });
+            return response.data.newAchievements ?? [];
         } catch (error: any) {
             return rejectWithValue(error.response?.data?.message || 'Неверный TOTP-код');
         }

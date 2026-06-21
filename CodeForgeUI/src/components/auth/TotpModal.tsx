@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { loginWith2FA, clearTwoFactorState } from '../features/auth/authSlice';
+import { useAppDispatch, useAppSelector } from '../../app/hooks';
+import { loginWith2FA, clearTwoFactorState } from '../../features/auth/authSlice';
 import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
 

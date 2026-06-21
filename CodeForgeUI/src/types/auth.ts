@@ -57,6 +57,14 @@ export interface Enable2FAResponse {
     manualEntryKey: string;
 }
 
+export interface AchievementUnlock {
+    id: string;
+    icon: string;
+    title: string;
+    description: string;
+    color: string;
+}
+
 export interface LoginWith2FARequest {
     email: string;
     password: string;

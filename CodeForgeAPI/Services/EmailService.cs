@@ -22,38 +22,25 @@ public class EmailService : IEmailService
         message.To.Add(new MailboxAddress("", to));
         message.Subject = subject;
 
-        var bodyBuilder = new BodyBuilder
-        {
-            HtmlBody = body
-        };
+        var bodyBuilder = new BodyBuilder { HtmlBody = body };
         message.Body = bodyBuilder.ToMessageBody();
 
-        using (var client = new SmtpClient())
+        using var client = new SmtpClient();
+        try
         {
-            try
-            {
-                // Accept all SSL certificates (in case of self-signed) - strictly for dev/test if needed, 
-                // but for Gmail usually not required if using standard ports. 
-                // client.ServerCertificateValidationCallback = (s, c, h, e) => true;
+            await client.ConnectAsync(
+                _emailSettings.MailServer,
+                _emailSettings.MailPort,
+                _emailSettings.UseSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
 
-                // Connect to the server
-                // 587 (StartTls) or 465 (SslOnConnect)
-                await client.ConnectAsync(_emailSettings.MailServer, _emailSettings.MailPort, _emailSettings.UseSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-
-                // Authenticate
-                await client.AuthenticateAsync(_emailSettings.SenderEmail, _emailSettings.Password);
-
-                // Send
-                await client.SendAsync(message);
-                
-                await client.DisconnectAsync(true);
-            }
-            catch (Exception ex)
-            {
-                // Adding basic logging or rethrow
-                Console.WriteLine($"[EmailService] Error sending email: {ex.Message}");
-                throw;
-            }
+            await client.AuthenticateAsync(_emailSettings.SenderEmail, _emailSettings.Password);
+            await client.SendAsync(message);
+            await client.DisconnectAsync(true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EmailService] Error sending email: {ex.Message}");
+            throw;
         }
     }
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { login, register, clearError, sendVerificationCode } from '../features/auth/authSlice';
+import { useAppDispatch, useAppSelector } from '../../app/hooks';
+import { login, register, clearError, sendVerificationCode } from '../../features/auth/authSlice';
 import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
 import VerificationModal from './VerificationModal';
@@ -22,6 +22,7 @@ function Login() {
     const [verificationEmail, setVerificationEmail] = useState('');
     const [showPersonalDataModal, setShowPersonalDataModal] = useState(false);
     const [acceptedPersonalData, setAcceptedPersonalData] = useState(false);
+    const [sendingCode, setSendingCode] = useState(false);
 
     useEffect(() => {
         if (error) {
@@ -48,8 +49,8 @@ function Login() {
             // Пароль передаётся в action и сохраняется в Redux для шага 2FA
             dispatch(login({ email, password }));
         } else {
+            setSendingCode(true);
             try {
-                // @ts-ignore
                 const action = await dispatch(sendVerificationCode(email));
                 if (sendVerificationCode.fulfilled.match(action)) {
                     setVerificationEmail(email);
@@ -59,17 +60,26 @@ function Login() {
                 }
             } catch (err) {
                 console.error(err);
+            } finally {
+                setSendingCode(false);
             }
         }
     };
 
+    const isSubmitting = isLogin ? loading : sendingCode;
+
     return (
         <div className="login-container animate-fade-in">
             <div className="login-card animate-slide-up">
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
-                    <img src="/logo.svg" alt="CodeForge" style={{ height: '60px', width: 'auto' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '1.75rem', gap: '0.5rem' }}>
+                    <img
+                        src="/logo.svg"
+                        alt="CodeForge"
+                        className="login-logo"
+                    />
+                    <span className="login-brand-name">CodeForge</span>
                 </div>
-                <h1>{isLogin ? 'Вход' : 'Регистрация'}</h1>
+                <h1>{isLogin ? 'Вход в систему' : 'Создать аккаунт'}</h1>
 
                 <form onSubmit={handleSubmit}>
                     {!isLogin && (
@@ -150,11 +160,11 @@ function Login() {
                                 style={{
                                     background: 'none',
                                     border: 'none',
-                                    color: 'var(--accent-color)',
+                                    color: '#6366f1',
                                     cursor: 'pointer',
-                                    fontSize: '0.875rem',
+                                    fontSize: '0.82rem',
                                     padding: 0,
-                                    textDecoration: 'underline'
+                                    fontWeight: 500,
                                 }}
                             >
                                 Забыли пароль?
@@ -162,8 +172,8 @@ function Login() {
                         </div>
                     )}
 
-                    <button type="submit" className="btn btn-primary" disabled={loading || (!isLogin && !acceptedPersonalData)} style={{ width: '100%' }}>
-                        {loading ? <ClipLoader color="#ffffff" size={20} /> : isLogin ? 'Войти' : 'Зарегистрироваться'}
+                    <button type="submit" className="btn btn-primary" disabled={isSubmitting || (!isLogin && !acceptedPersonalData)} style={{ width: '100%', padding: '0.7rem', fontSize: '0.95rem' }}>
+                        {isSubmitting ? <ClipLoader color="#ffffff" size={20} /> : isLogin ? '→ Войти' : '→ Зарегистрироваться'}
                     </button>
                 </form>
 

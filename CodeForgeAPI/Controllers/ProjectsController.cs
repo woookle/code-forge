@@ -17,6 +17,7 @@ public class ProjectsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ICodeGeneratorService _codeGeneratorService;
+    private readonly IAchievementService _achievements;
 
     /// <summary>Shared camelCase options so authConfig JSON in DB matches the frontend's expectations</summary>
     private static readonly JsonSerializerOptions _camelCaseOptions = new()
@@ -26,10 +27,11 @@ public class ProjectsController : ControllerBase
         WriteIndented = false
     };
 
-    public ProjectsController(ApplicationDbContext context, ICodeGeneratorService codeGeneratorService)
+    public ProjectsController(ApplicationDbContext context, ICodeGeneratorService codeGeneratorService, IAchievementService achievements)
     {
         _context = context;
         _codeGeneratorService = codeGeneratorService;
+        _achievements = achievements;
     }
     
     private Guid GetCurrentUserId()
@@ -94,9 +96,42 @@ public class ProjectsController : ControllerBase
         };
         
         _context.Projects.Add(project);
+
+        _context.AccountActivities.Add(new AccountActivity
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            EventType = "project_created",
+            Description = $"Создан проект «{project.Name}»",
+            Meta = $"{project.TargetStack}/{project.ArchitectureType}",
+            CreatedAt = DateTime.UtcNow,
+        });
+
         await _context.SaveChangesAsync();
-        
-        return CreatedAtAction(nameof(GetProject), new { id = project.Id }, project);
+
+        var newAchievements = await _achievements.CheckAndUnlockAsync(userId);
+
+        return CreatedAtAction(nameof(GetProject), new { id = project.Id }, new
+        {
+            project.Id,
+            project.UserId,
+            project.Name,
+            project.Description,
+            project.TargetStack,
+            project.ArchitectureType,
+            project.AuthConfig,
+            project.CreatedAt,
+            project.UpdatedAt,
+            project.Entities,
+            newAchievements = newAchievements.Select(a => new
+            {
+                a.Id,
+                a.Icon,
+                a.Title,
+                a.Description,
+                a.Color,
+            }),
+        });
     }
     
     [HttpPut("{id}")]

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Project, Entity } from '../types';
+import { Project, Entity } from '../../types';
 
 interface MicroservicesPreviewProps {
     project: Project;

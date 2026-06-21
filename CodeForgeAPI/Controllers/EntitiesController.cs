@@ -160,4 +160,30 @@ public class EntitiesController : ControllerBase
         
         return NoContent();
     }
+
+    [HttpPost("reorder")]
+    public async Task<IActionResult> ReorderEntities([FromBody] ReorderEntitiesRequest request)
+    {
+        var userId = GetCurrentUserId();
+        var ids = request.Items.Select(i => i.Id).ToList();
+
+        var entities = await _context.Entities
+            .Include(e => e.Project)
+            .Where(e => ids.Contains(e.Id))
+            .ToListAsync();
+
+        // Убеждаемся что все сущности принадлежат одному проекту одного пользователя
+        if (entities.Any(e => e.Project.UserId != userId))
+            return Forbid();
+
+        foreach (var item in request.Items)
+        {
+            var entity = entities.FirstOrDefault(e => e.Id == item.Id);
+            if (entity != null)
+                entity.DisplayOrder = item.DisplayOrder;
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
 }

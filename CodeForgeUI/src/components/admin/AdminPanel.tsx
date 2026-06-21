@@ -1,11 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
-import api from '../utils/api';
-import { User } from '../types/auth';
-import { Project } from '../types';
+import api from '../../utils/api';
+import { User } from '../../types/auth';
+import { Project } from '../../types';
 import { toast } from 'react-toastify';
 import { ClipLoader } from 'react-spinners';
-import { Page } from '../App';
-import { useConfirm } from '../context/ConfirmContext';
+import { Page } from '../../App';
+import { useConfirm } from '../../context/ConfirmContext';
 
 interface AdminPanelProps {
     onNavigate: (page: Page) => void;
@@ -123,20 +123,24 @@ function AdminPanel({ onNavigate }: AdminPanelProps) {
         with2FA: users.filter(u => u.twoFactorEnabled).length,
     }), [users]);
 
-    const handleDeleteUser = async (id: string, email: string) => {
+    const handleDeleteUser = async (user: User) => {
+        const projectCount = user.projects?.length ?? 0;
+        const entityCount = user.projects?.reduce((sum, p) => sum + (p.entities?.length ?? 0), 0) ?? 0;
+
         if (await confirm({
-            title: 'Удаление пользователя',
-            message: `Удалить пользователя ${email}? Все его проекты будут удалены.`,
-            confirmText: 'Удалить',
+            title: 'Удаление аккаунта',
+            message: `Удалить пользователя ${user.email}?\n\nБудут безвозвратно удалены:\n• ${projectCount} проект(ов)\n• ${entityCount} сущностей со всеми полями и связями\n• история генераций, достижения и активность аккаунта\n• аватар и токены верификации`,
+            confirmText: 'Удалить навсегда',
             type: 'danger'
         })) {
             try {
-                await api.delete(`/users/${id}`);
-                setUsers(prev => prev.filter(u => u.id !== id));
-                if (selectedUser?.id === id) setSelectedUser(null);
-                toast.success('Пользователь удалён');
+                await api.delete(`/users/${user.id}`);
+                setUsers(prev => prev.filter(u => u.id !== user.id));
+                if (selectedUser?.id === user.id) setSelectedUser(null);
+                toast.success('Аккаунт и все связанные данные удалены');
             } catch (error: any) {
-                toast.error(error.response?.data || 'Ошибка удаления');
+                const msg = error.response?.data?.message ?? error.response?.data ?? 'Ошибка удаления';
+                toast.error(typeof msg === 'string' ? msg : 'Ошибка удаления');
             }
         }
     };
@@ -432,7 +436,7 @@ function AdminPanel({ onNavigate }: AdminPanelProps) {
                                                 {user.role !== 'Admin' && (
                                                     <button
                                                         className="btn btn-danger btn-small"
-                                                        onClick={() => handleDeleteUser(user.id, user.email)}
+                                                        onClick={() => handleDeleteUser(user)}
                                                         title="Удалить"
                                                     >
                                                         🗑️
@@ -616,12 +620,24 @@ function AdminPanel({ onNavigate }: AdminPanelProps) {
                                             </div>
                                         )}
                                     </div>
-                                    <div style={{ display: 'flex', gap: '8px', paddingTop: '8px' }}>
+                                    <div style={{ display: 'flex', gap: '8px', paddingTop: '8px', flexWrap: 'wrap' }}>
                                         <button className="btn btn-secondary" onClick={() => openEditUserModal(selectedUser)}>✏️ Редактировать</button>
                                         {selectedUser.role !== 'Admin' && (
-                                            <button className="btn btn-danger" onClick={() => { handleDeleteUser(selectedUser.id, selectedUser.email); setSelectedUser(null); }}>🗑️ Удалить</button>
+                                            <button className="btn btn-danger" onClick={() => { handleDeleteUser(selectedUser); }}>🗑️ Удалить аккаунт</button>
                                         )}
                                     </div>
+                                    {selectedUser.role !== 'Admin' && (
+                                        <div style={{
+                                            marginTop: '8px', padding: '14px 16px', borderRadius: '10px',
+                                            border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.05)',
+                                        }}>
+                                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ef4444', marginBottom: '4px' }}>⚠️ Опасная зона</div>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                                Удаление аккаунта каскадно удалит все проекты пользователя, сущности, поля, связи,
+                                                историю генераций, достижения и записи активности из базы данных.
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Project } from '../types';
+import { Project } from '../../types';
 
 interface MonolithPreviewProps {
     project: Project;

@@ -2,6 +2,19 @@ using System.ComponentModel.DataAnnotations;
 
 namespace CodeForgeAPI.DTOs.Entities;
 
+public class ReorderEntityItem
+{
+    [Required]
+    public Guid Id { get; set; }
+    public int DisplayOrder { get; set; }
+}
+
+public class ReorderEntitiesRequest
+{
+    [Required]
+    public List<ReorderEntityItem> Items { get; set; } = new();
+}
+
 public class CreateEntityRequest
 {
     [Required]

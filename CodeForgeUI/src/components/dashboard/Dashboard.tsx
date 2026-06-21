@@ -1,15 +1,58 @@
-import { useEffect, useState } from 'react';
-import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { fetchProjects, fetchProjectById, createProject, deleteProject, generateProject, updateProjectAuth } from '../features/projects/projectsSlice';
-import { logout } from '../features/auth/authSlice';
-import { Project, Entity, Field, AuthConfig } from '../types';
-import api from '../utils/api';
-import { Page } from '../App';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useAppDispatch, useAppSelector } from '../../app/hooks';
+import { fetchProjects, fetchProjectById, createProject, deleteProject, generateProject, updateProjectAuth } from '../../features/projects/projectsSlice';
+import { logout, updateUser } from '../../features/auth/authSlice';
+import { Project, Entity, Field, AuthConfig } from '../../types';
+import api from '../../utils/api';
+import { Page } from '../../App';
 import { toast } from 'react-toastify';
-import { useConfirm } from '../context/ConfirmContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import FAQWidget from './FAQWidget';
 import MicroservicesPreview from './MicroservicesPreview';
 import MonolithPreview from './MonolithPreview';
+import ProjectTemplatesModal from './ProjectTemplatesModal';
+import ERDiagram from './ERDiagram';
+import GenerationHistoryModal from './GenerationHistoryModal';
+import { ProjectTemplate } from '../../data/projectTemplates';
+import { getOutgoingRelationships, formatRelationshipType, OutgoingRelationship } from '../../utils/entityRelationships';
+import { showAchievements } from '../common/AchievementToast';
+import {
+    DndContext,
+    closestCenter,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+    DragEndEvent,
+} from '@dnd-kit/core';
+import {
+    SortableContext,
+    sortableKeyboardCoordinates,
+    verticalListSortingStrategy,
+    useSortable,
+    arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Обёртка для перетаскивания сущностей
+function SortableEntityCard({ id, children }: { id: string; children: React.ReactNode }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    return (
+        <div
+            ref={setNodeRef}
+            style={{
+                transform: CSS.Transform.toString(transform),
+                transition,
+                opacity: isDragging ? 0.5 : 1,
+                zIndex: isDragging ? 10 : undefined,
+            }}
+            {...attributes}
+            {...listeners}
+        >
+            {children}
+        </div>
+    );
+}
 
 interface DashboardProps {
     onNavigate: (page: Page) => void;
@@ -27,8 +70,40 @@ function Dashboard({ onNavigate }: DashboardProps) {
     const [showAuthModal, setShowAuthModal] = useState(false);
 
     const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
-
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+    // Шаблоны / экспорт / ER / история
+    const [showTemplates, setShowTemplates] = useState(false);
+    const [showERDiagram, setShowERDiagram] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
+    const importFileRef = useRef<HTMLInputElement>(null);
+
+    // Локальный порядок сущностей для DnD
+    const [entityOrder, setEntityOrder] = useState<Entity[]>([]);
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    );
+
+    // Поиск и пагинация проектов
+    const [projectSearch, setProjectSearch] = useState('');
+    const [projectPage, setProjectPage] = useState(1);
+    const PROJECT_PAGE_SIZE = 5;
+
+    const filteredProjects = projects.filter(p =>
+        p.name.toLowerCase().includes(projectSearch.toLowerCase())
+    );
+    const totalProjectPages = Math.ceil(filteredProjects.length / PROJECT_PAGE_SIZE);
+    const pagedProjects = filteredProjects.slice(
+        (projectPage - 1) * PROJECT_PAGE_SIZE,
+        projectPage * PROJECT_PAGE_SIZE
+    );
+
+    // При изменении поиска — сбросить на первую страницу
+    useEffect(() => {
+        setProjectPage(1);
+    }, [projectSearch]);
 
     useEffect(() => {
         dispatch(fetchProjects());
@@ -40,10 +115,19 @@ function Dashboard({ onNavigate }: DashboardProps) {
         setIsSidebarOpen(false);
     };
 
+    const showProjectAchievements = (newAchievements: { id: string; icon: string; title: string; description: string; color: string }[]) => {
+        if (newAchievements.length > 0) {
+            showAchievements(newAchievements);
+        }
+    };
+
     const handleNewProject = async (name: string, targetStack: 'CSharp_PostgreSQL' | 'NodeJS_MongoDB', architectureType: 'Monolith' | 'Microservices') => {
         try {
-            await dispatch(createProject({ name, description: '', targetStack, architectureType })).unwrap();
+            const result = await dispatch(createProject({ name, description: '', targetStack, architectureType })).unwrap();
             setShowNewProject(false);
+            setProjectSearch('');
+            setProjectPage(1);
+            showProjectAchievements(result.newAchievements);
             toast.success('Проект успешно создан');
         } catch (error) {
             toast.error('Ошибка создания проекта');
@@ -160,15 +244,23 @@ function Dashboard({ onNavigate }: DashboardProps) {
         }
     };
 
-    const handleDeleteRelationship = async (id: string) => {
+    const handleDeleteOutgoingRelationship = async (entity: Entity, rel: OutgoingRelationship) => {
         if (await confirm({
             title: 'Удаление связи',
-            message: 'Вы уверены, что хотите удалить эту связь?',
+            message: 'Удалить связь и поле-связь? Это нельзя отменить.',
             confirmText: 'Удалить',
             type: 'danger'
         })) {
             try {
-                await api.delete(`/relationships/${id}`);
+                if (rel.fieldId) {
+                    await api.delete(`/fields/${rel.fieldId}`);
+                } else {
+                    if (rel.id) await api.delete(`/relationships/${rel.id}`);
+                    const field = entity.fields?.find(
+                        f => f.dataType === 'Relationship' && f.name === rel.sourceFieldName
+                    );
+                    if (field) await api.delete(`/fields/${field.id}`);
+                }
                 if (currentProject) {
                     dispatch(fetchProjectById(currentProject.id));
                 }
@@ -190,6 +282,19 @@ function Dashboard({ onNavigate }: DashboardProps) {
             a.download = `${currentProject.name}.zip`;
             a.click();
             window.URL.revokeObjectURL(url);
+            // Записываем историю в БД + проверяем новые достижения
+            try {
+                const genRes = await api.post('/generations', {
+                    projectId: currentProject.id,
+                    projectName: currentProject.name,
+                    targetStack: currentProject.targetStack,
+                    architectureType: currentProject.architectureType,
+                    entityCount: currentProject.entities?.length ?? 0,
+                });
+                if (genRes.data?.newAchievements?.length) {
+                    showAchievements(genRes.data.newAchievements);
+                }
+            } catch { /* не прерываем основной флоу */ }
             toast.success('Проект успешно сгенерирован');
         } catch (error) {
             toast.error('Ошибка генерации проекта');
@@ -212,6 +317,253 @@ function Dashboard({ onNavigate }: DashboardProps) {
         toast.info('Вы вышли из системы');
     };
 
+    // Синхронизируем локальный порядок при смене проекта
+    useEffect(() => {
+        setEntityOrder(currentProject?.entities ?? []);
+        setShowERDiagram(false);
+    }, [currentProject?.id, currentProject?.entities]);
+
+    // Создание проекта из шаблона
+    const handleCreateFromTemplate = useCallback(async (
+        name: string,
+        stack: import('../../types').TargetStack,
+        arch: import('../../types').ArchitectureType,
+        template: ProjectTemplate
+    ) => {
+        const result = await dispatch(createProject({ name, description: template.description, targetStack: stack, architectureType: arch })).unwrap();
+        const projectId = result.project.id;
+        setProjectSearch('');
+        setProjectPage(1);
+        showProjectAchievements(result.newAchievements);
+
+        const entityIdByName: Record<string, string> = {};
+
+        for (let i = 0; i < template.entities.length; i++) {
+            const tplEntity = template.entities[i];
+            const entityRes = await api.post(`/entities/project/${projectId}`, {
+                name: tplEntity.name,
+                description: '',
+                displayOrder: i,
+                serviceName: arch === 'Microservices' ? tplEntity.name.toLowerCase() : null,
+            });
+            entityIdByName[tplEntity.name] = entityRes.data.id;
+        }
+
+        for (const tplEntity of template.entities) {
+            const entityId = entityIdByName[tplEntity.name];
+
+            for (let j = 0; j < tplEntity.fields.length; j++) {
+                const f = tplEntity.fields[j];
+                const payload: Record<string, unknown> = {
+                    name: f.name,
+                    dataType: f.dataType,
+                    isRequired: f.isRequired,
+                    isUnique: f.isUnique,
+                    isPrimaryKey: false,
+                    displayOrder: j,
+                };
+
+                if (f.dataType === 'Relationship' && f.relatedEntityName) {
+                    const relatedId = entityIdByName[f.relatedEntityName];
+                    if (!relatedId) continue;
+                    payload.relatedEntityId = relatedId;
+                    payload.relationshipType = f.relationshipType ?? 'OneToMany';
+                }
+
+                await api.post(`/fields/entity/${entityId}`, payload);
+
+                if (f.dataType === 'Relationship' && f.relatedEntityName) {
+                    const relatedId = entityIdByName[f.relatedEntityName];
+                    if (relatedId) {
+                        await api.post('/relationships', {
+                            sourceEntityId: entityId,
+                            targetEntityId: relatedId,
+                            relationshipType: f.relationshipType ?? 'OneToMany',
+                            sourceFieldName: f.name,
+                        });
+                    }
+                }
+            }
+        }
+
+        dispatch(fetchProjectById(projectId));
+        toast.success(`Проект "${name}" создан из шаблона`);
+    }, [dispatch]);
+
+    // Экспорт схемы
+    const handleExportSchema = useCallback(() => {
+        if (!currentProject) return;
+        const schema = {
+            name: currentProject.name,
+            description: currentProject.description,
+            targetStack: currentProject.targetStack,
+            architectureType: currentProject.architectureType,
+            authConfig: currentProject.authConfig,
+            entities: (currentProject.entities ?? []).map(e => ({
+                name: e.name,
+                description: e.description,
+                displayOrder: e.displayOrder,
+                serviceName: e.serviceName,
+                fields: (e.fields ?? []).map(f => ({
+                    name: f.name,
+                    dataType: f.dataType,
+                    isRequired: f.isRequired,
+                    isUnique: f.isUnique,
+                    isPrimaryKey: f.isPrimaryKey,
+                    displayOrder: f.displayOrder,
+                })),
+            })),
+        };
+        const blob = new Blob([JSON.stringify(schema, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${currentProject.name}-schema.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Схема экспортирована');
+    }, [currentProject]);
+
+    // Импорт схемы из JSON
+    const handleImportSchema = useCallback(async (file: File) => {
+        try {
+            const text = await file.text();
+            const schema = JSON.parse(text);
+            if (!schema.name || !schema.entities) throw new Error('Некорректный формат файла');
+
+            const result = await dispatch(createProject({
+                name: schema.name,
+                description: schema.description ?? '',
+                targetStack: schema.targetStack ?? 'NodeJS_MongoDB',
+                architectureType: schema.architectureType ?? 'Monolith',
+            })).unwrap();
+            const projectId = result.project.id;
+            showProjectAchievements(result.newAchievements);
+
+            const entities = schema.entities ?? [];
+            for (const e of entities) {
+                const entityRes = await api.post(`/entities/project/${projectId}`, {
+                    name: e.name,
+                    description: e.description ?? '',
+                    displayOrder: e.displayOrder ?? 0,
+                    serviceName: e.serviceName ?? null,
+                });
+                const entityId = entityRes.data.id;
+                for (const f of (e.fields ?? [])) {
+                    await api.post(`/fields/entity/${entityId}`, {
+                        name: f.name,
+                        dataType: f.dataType,
+                        isRequired: f.isRequired ?? false,
+                        isUnique: f.isUnique ?? false,
+                        isPrimaryKey: f.isPrimaryKey ?? false,
+                        displayOrder: f.displayOrder ?? 0,
+                    });
+                }
+            }
+
+            dispatch(fetchProjectById(projectId));
+            setProjectSearch('');
+            setProjectPage(1);
+            toast.success(`Схема "${schema.name}" импортирована`);
+        } catch (err: any) {
+            toast.error(err?.message ?? 'Ошибка импорта схемы');
+        }
+    }, [dispatch]);
+
+    // Дублирование проекта
+    const handleDuplicateProject = useCallback(async () => {
+        if (!currentProject) return;
+        const copyName = `${currentProject.name} (копия)`;
+        try {
+            const result = await dispatch(createProject({
+                name: copyName,
+                description: currentProject.description ?? '',
+                targetStack: currentProject.targetStack,
+                architectureType: currentProject.architectureType,
+            })).unwrap();
+            const newProjectId = result.project.id;
+            showProjectAchievements(result.newAchievements);
+
+            const entities = currentProject.entities ?? [];
+            for (let i = 0; i < entities.length; i++) {
+                const e = entities[i];
+                const entityRes = await api.post(`/entities/project/${newProjectId}`, {
+                    name: e.name,
+                    description: e.description ?? '',
+                    displayOrder: e.displayOrder,
+                    serviceName: e.serviceName ?? null,
+                });
+                const newEntityId = entityRes.data.id;
+                for (const f of (e.fields ?? [])) {
+                    await api.post(`/fields/entity/${newEntityId}`, {
+                        name: f.name,
+                        dataType: f.dataType,
+                        isRequired: f.isRequired,
+                        isUnique: f.isUnique,
+                        isPrimaryKey: f.isPrimaryKey,
+                        displayOrder: f.displayOrder,
+                    });
+                }
+            }
+
+            // Копируем authConfig если есть
+            if (currentProject.authConfig) {
+                await api.put(`/projects/${newProjectId}/auth`, { authConfig: currentProject.authConfig });
+            }
+
+            dispatch(fetchProjectById(newProjectId));
+            setProjectSearch('');
+            setProjectPage(1);
+            toast.success(`Проект дублирован: "${copyName}"`);
+        } catch {
+            toast.error('Ошибка при дублировании проекта');
+        }
+    }, [currentProject, dispatch]);
+
+    // DnD: перетаскивание сущностей
+    const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id || !currentProject) return;
+
+        const oldIndex = entityOrder.findIndex(e => e.id === active.id);
+        const newIndex = entityOrder.findIndex(e => e.id === over.id);
+        if (oldIndex === -1 || newIndex === -1) return;
+
+        const newOrder = arrayMove(entityOrder, oldIndex, newIndex).map((e, idx) => ({ ...e, displayOrder: idx }));
+        setEntityOrder(newOrder);
+
+        try {
+            await api.post('/entities/reorder', {
+                items: newOrder.map(e => ({ id: e.id, displayOrder: e.displayOrder })),
+            });
+        } catch {
+            setEntityOrder(currentProject.entities ?? []);
+            toast.error('Ошибка обновления порядка');
+        }
+    }, [currentProject, entityOrder]);
+
+    const handleToggleTheme = async () => {
+        if (!user) return;
+        const newDarkMode = !user.isDarkMode;
+        // Мгновенно применяем тему через DOM (App.tsx синхронизирует по user)
+        if (newDarkMode) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+        try {
+            await dispatch(updateUser({ id: user.id, data: { isDarkMode: newDarkMode } })).unwrap();
+        } catch {
+            // Откатываем если запрос не удался
+            if (newDarkMode) {
+                document.body.classList.remove('dark-mode');
+            } else {
+                document.body.classList.add('dark-mode');
+            }
+            toast.error('Не удалось сохранить тему');
+        }
+    };
+
     return (
         <div className="dashboard animate-fade-in">
             {/* Мобильная шапка */}
@@ -232,30 +584,97 @@ function Dashboard({ onNavigate }: DashboardProps) {
             />
 
             <div className={`sidebar animate-slide-up ${isSidebarOpen ? 'open' : ''}`}>
-                <div className="sidebar-header" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2rem' }}>
-                    <img src={user?.isDarkMode ? "/logo_white.svg" : "/logo.svg"} alt="CodeForge" style={{ height: '40px', width: 'auto' }} />
-                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold', letterSpacing: '-0.5px' }}>CodeForge</span>
+                <div className="sidebar-header" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.75rem' }}>
+                    <img src={user?.isDarkMode ? "/logo_white.svg" : "/logo.svg"} alt="CodeForge" style={{ height: '38px', width: 'auto' }} />
+                    <span style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.5px', background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>CodeForge</span>
                 </div>
-                <h2>Мои Проекты</h2>
-                <button className="btn btn-primary hover-scale" onClick={() => setShowNewProject(true)}>
-                    + Новый проект
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', fontWeight: 600 }}>Проекты</h2>
+                    {projects.length > 0 && (
+                        <span style={{ fontSize: '0.72rem', background: 'var(--accent-light)', color: 'var(--accent-color)', padding: '0.1rem 0.5rem', borderRadius: '999px', fontWeight: 600 }}>
+                            {projectSearch ? `${filteredProjects.length} / ${projects.length}` : projects.length}
+                        </span>
+                    )}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <button className="btn btn-primary hover-scale" onClick={() => setShowNewProject(true)} style={{ flex: 1, justifyContent: 'center' }}>
+                        + Новый проект
+                    </button>
+                    <button className="btn btn-secondary hover-scale" onClick={() => setShowTemplates(true)} title="Создать из шаблона" style={{ flexShrink: 0, padding: '0 0.75rem' }}>
+                        ✨
+                    </button>
+                </div>
+
+                {/* Поиск и список проектов — прокручиваемая область */}
+                <div className="sidebar-body">
+                {projects.length > 0 && (
+                    <div className="project-search-wrap">
+                        <span className="project-search-icon">🔍</span>
+                        <input
+                            className="project-search-input"
+                            type="text"
+                            placeholder="Поиск проектов..."
+                            value={projectSearch}
+                            onChange={e => setProjectSearch(e.target.value)}
+                        />
+                        {projectSearch && (
+                            <button className="project-search-clear" onClick={() => setProjectSearch('')} title="Очистить">✕</button>
+                        )}
+                    </div>
+                )}
 
                 <ul className="project-list">
-                    {projects.map((project, index) => (
+                    {pagedProjects.length === 0 && (
+                        <li style={{ padding: '1rem 0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', textAlign: 'center' }}>
+                            Ничего не найдено
+                        </li>
+                    )}
+                    {pagedProjects.map((project, index) => (
                         <li
                             key={project.id}
                             className={`project-item ${currentProject?.id === project.id ? 'active' : ''}`}
                             onClick={() => handleSelectProject(project)}
-                            style={{ animationDelay: `${index * 50}ms` }}
+                            style={{ animationDelay: `${index * 40}ms` }}
                         >
                             <h3>{project.name}</h3>
-                            <div className="stack-badge">{project.targetStack}</div>
+                            <div className={`stack-badge ${project.targetStack === 'CSharp_PostgreSQL' ? 'csharp' : 'nodejs'}${project.architectureType === 'Microservices' ? ' micro' : ''}`}>
+                                {project.targetStack === 'CSharp_PostgreSQL' ? 'C# · PostgreSQL' : 'Node.js · MongoDB'}
+                                {project.architectureType === 'Microservices' ? ' · μServices' : ''}
+                            </div>
                         </li>
                     ))}
                 </ul>
 
-                <div style={{ marginTop: 'auto', paddingTop: '1rem' }}>
+                {/* Пагинация */}
+                {totalProjectPages > 1 && (
+                    <div className="project-pagination">
+                        <button
+                            className="project-page-btn"
+                            onClick={() => setProjectPage(p => Math.max(1, p - 1))}
+                            disabled={projectPage === 1}
+                            title="Предыдущая страница"
+                        >‹</button>
+                        <div className="project-page-dots">
+                            {Array.from({ length: totalProjectPages }, (_, i) => i + 1).map(page => (
+                                <button
+                                    key={page}
+                                    className={`project-page-dot ${page === projectPage ? 'active' : ''}`}
+                                    onClick={() => setProjectPage(page)}
+                                    title={`Страница ${page}`}
+                                />
+                            ))}
+                        </div>
+                        <button
+                            className="project-page-btn"
+                            onClick={() => setProjectPage(p => Math.min(totalProjectPages, p + 1))}
+                            disabled={projectPage === totalProjectPages}
+                            title="Следующая страница"
+                        >›</button>
+                    </div>
+                )}
+                </div>
+
+                <div className="sidebar-footer">
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>
                         Разработчик
                     </div>
@@ -277,13 +696,52 @@ function Dashboard({ onNavigate }: DashboardProps) {
 
             <div className="main-content">
                 <div className="header">
-                    <h1>{currentProject ? currentProject.name : 'Выберите проект'}</h1>
+                    <div>
+                        <h1 style={{ marginBottom: currentProject ? '0.25rem' : 0 }}>
+                            {currentProject ? currentProject.name : 'Выберите проект'}
+                        </h1>
+                        {currentProject && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.35rem' }}>
+                                <span className={`stack-badge ${currentProject.targetStack === 'CSharp_PostgreSQL' ? 'csharp' : 'nodejs'}`}>
+                                    {currentProject.targetStack === 'CSharp_PostgreSQL' ? 'C# · PostgreSQL' : 'Node.js · MongoDB'}
+                                </span>
+                                {currentProject.architectureType === 'Microservices' && (
+                                    <span className="stack-badge micro">Микросервисы</span>
+                                )}
+                                {currentProject.entities && currentProject.entities.length > 0 && (
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                        {currentProject.entities.length} {currentProject.entities.length === 1 ? 'сущность' : currentProject.entities.length < 5 ? 'сущности' : 'сущностей'}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     <div className="user-controls">
                         {user?.role === 'Admin' && (
                             <button className="btn btn-warning btn-small" onClick={() => onNavigate('admin')}>
-                                Админ Панель
+                                👑 Админ
                             </button>
                         )}
+
+                        {/* Кнопка истории генераций */}
+                        <button
+                            className="theme-toggle-btn"
+                            onClick={() => setShowHistory(true)}
+                            title="История генераций"
+                            aria-label="История генераций"
+                        >
+                            📜
+                        </button>
+
+                        {/* Кнопка переключения темы */}
+                        <button
+                            className="theme-toggle-btn"
+                            onClick={handleToggleTheme}
+                            title={user?.isDarkMode ? 'Светлая тема' : 'Тёмная тема'}
+                            aria-label="Переключить тему"
+                        >
+                            {user?.isDarkMode ? '☀️' : '🌙'}
+                        </button>
 
                         <div
                             className="user-profile-summary hover-scale"
@@ -292,24 +750,26 @@ function Dashboard({ onNavigate }: DashboardProps) {
                             style={{
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '10px',
+                                gap: '8px',
                                 cursor: 'pointer',
-                                padding: '5px 10px',
-                                borderRadius: '8px',
-                                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                padding: '5px 10px 5px 6px',
+                                borderRadius: '99px',
+                                border: '1.5px solid var(--border-color)',
+                                backgroundColor: 'white',
                                 transition: 'all 0.2s',
+                                boxShadow: 'var(--shadow-sm)',
                             }}
                         >
                             <div className="avatar-circle" style={{
-                                width: '32px',
-                                height: '32px',
+                                width: '28px',
+                                height: '28px',
                                 borderRadius: '50%',
                                 overflow: 'hidden',
-                                backgroundColor: '#ddd', // Запасной цвет
+                                background: 'var(--accent-gradient)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                border: '2px solid rgba(255,255,255,0.2)'
+                                flexShrink: 0,
                             }}>
                                 {user?.avatarUrl ? (
                                     <img
@@ -318,12 +778,12 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                     />
                                 ) : (
-                                    <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#555' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'white' }}>
                                         {user?.email?.charAt(0).toUpperCase()}
                                     </span>
                                 )}
                             </div>
-                            <span style={{ fontWeight: '500' }}>{user?.email}</span>
+                            <span style={{ fontWeight: 500, fontSize: '0.85rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</span>
                         </div>
 
                         <button className="btn btn-secondary btn-small" onClick={handleLogout}>
@@ -334,7 +794,7 @@ function Dashboard({ onNavigate }: DashboardProps) {
 
                 {currentProject && (
                     <>
-                        <div className="flex gap-2 mb-4">
+                        <div className="flex gap-2 mb-4" style={{ flexWrap: 'wrap' }}>
                             <button className="btn btn-primary" onClick={() => setShowNewEntity(true)}>
                                 + Новая сущность
                             </button>
@@ -353,8 +813,34 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                     } catch { return '🔓 Auth'; }
                                 })()}
                             </button>
+                            {/* Дублировать */}
+                            <button className="btn btn-secondary" onClick={handleDuplicateProject} title="Дублировать проект">
+                                📋 Дублировать
+                            </button>
+                            {/* Экспорт / Импорт схемы */}
+                            <button className="btn btn-secondary" onClick={handleExportSchema} title="Экспорт схемы в JSON">
+                                ⬇ Экспорт
+                            </button>
+                            <button className="btn btn-secondary" onClick={() => importFileRef.current?.click()} title="Импорт схемы из JSON">
+                                ⬆ Импорт
+                            </button>
+                            <input
+                                ref={importFileRef}
+                                type="file"
+                                accept=".json"
+                                style={{ display: 'none' }}
+                                onChange={e => { if (e.target.files?.[0]) { handleImportSchema(e.target.files[0]); e.target.value = ''; } }}
+                            />
+                            {/* ER-диаграмма */}
+                            <button
+                                className={`btn ${showERDiagram ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setShowERDiagram(v => !v)}
+                                title="Визуальная ER-диаграмма"
+                            >
+                                {showERDiagram ? '📋 Схема' : '🗺 ER-диаграмма'}
+                            </button>
                             <button className="btn btn-danger" onClick={() => handleDeleteProject(currentProject.id)}>
-                                🗑 Удалить проект
+                                🗑 Удалить
                             </button>
                             {/* Значок архитектуры */}
                             <span style={{
@@ -367,6 +853,17 @@ function Dashboard({ onNavigate }: DashboardProps) {
                                 {currentProject.architectureType === 'Microservices' ? '🔀 Microservices' : '🏗️ Monolith'}
                             </span>
                         </div>
+
+                        {/* ER-диаграмма */}
+                        {showERDiagram && entityOrder.length > 0 && (
+                            <ERDiagram entities={entityOrder} isDarkMode={user?.isDarkMode} />
+                        )}
+                        {showERDiagram && entityOrder.length === 0 && (
+                            <div className="empty-state" style={{ marginBottom: '1.5rem' }}>
+                                <div style={{ fontSize: '2rem' }}>🗺</div>
+                                <p>Нет сущностей для отображения на диаграмме</p>
+                            </div>
+                        )}
 
                         {/* Визуальный просмотр микросервисной архитектуры */}
                         {currentProject.architectureType === 'Microservices' && (() => {
@@ -417,127 +914,143 @@ function Dashboard({ onNavigate }: DashboardProps) {
                             );
                         })()}
 
-                        {currentProject.entities?.map((entity: Entity) => {
-                            const svcName = entity.serviceName || entity.name;
-                            const isMicro = currentProject.architectureType === 'Microservices';
-                            const allSvcNames = Array.from(new Set((currentProject.entities || []).map(e => e.serviceName || e.name)));
-                            const colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
-                            const colorMap: Record<string, string> = {};
-                            allSvcNames.forEach((g, i) => { colorMap[g] = colors[i % colors.length]; });
-                            const svcColor = colorMap[svcName] || '#6366f1';
-                            return (
-                            <div key={entity.id} className="entity-card">
-                                <div className="entity-header">
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <h3>{entity.name}</h3>
-                                        {isMicro && (
-                                            <span style={{ padding: '1px 8px', borderRadius: '10px', background: svcColor + '22', color: svcColor, border: `1px solid ${svcColor}44`, fontSize: '0.72rem', fontWeight: 600 }}>
-                                                ⚙️ {svcName}-service
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="entity-actions">
-                                        <button
-                                            className="btn btn-primary btn-small"
-                                            onClick={() => {
-                                                setSelectedEntityId(entity.id);
-                                                setEditingField(null);
-                                                setShowFieldModal(true);
-                                            }}
-                                        >
-                                            + Поле
-                                        </button>
-                                        {isMicro && (
-                                            <button
-                                                className="btn btn-secondary btn-small"
-                                                title="Изменить имя микросервиса"
-                                                onClick={() => handleChangeServiceName(entity.id, entity.serviceName, entity.name)}
-                                            >
-                                                ⚙️ Сервис
-                                            </button>
-                                        )}
-                                        <button
-                                            className="btn btn-danger btn-small"
-                                            onClick={() => handleDeleteEntity(entity.id)}
-                                        >
-                                            Удалить
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {entity.fields && entity.fields.length > 0 && (
-                                    <div className="table-container">
-                                        <table style={{ marginBottom: '15px' }}>
-                                            <thead>
-                                                <tr>
-                                                    <th>Имя</th>
-                                                    <th>Тип</th>
-                                                    <th>Атрибуты</th>
-                                                    <th>Действия</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {entity.fields.map((field: Field) => (
-                                                    <tr key={field.id}>
-                                                        <td>{field.name}</td>
-                                                        <td>{field.dataType}</td>
-                                                        <td>
-                                                            {field.isRequired ? <span className="badge badge-warning">Обяз.</span> : ''}
-                                                            {field.isUnique ? <span className="badge badge-info">Уник.</span> : ''}
-                                                            {field.isPrimaryKey ? <span className="badge badge-success">Ключ</span> : ''}
-                                                        </td>
-                                                        <td>
-                                                            <div style={{ display: 'flex', gap: '5px' }}>
-                                                                <button
-                                                                    className="btn btn-secondary btn-small"
-                                                                    onClick={() => {
-                                                                        setSelectedEntityId(entity.id);
-                                                                        setEditingField(field);
-                                                                        setShowFieldModal(true);
-                                                                    }}
-                                                                >
-                                                                    ✏️
-                                                                </button>
-                                                                <button
-                                                                    className="btn btn-danger btn-small"
-                                                                    onClick={() => handleDeleteField(field.id)}
-                                                                >
-                                                                    🗑️
-                                                                </button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-
-                                {/* Отображение связей */}
-                                {entity.sourceRelationships && entity.sourceRelationships.length > 0 && (
-                                    <div className="relationships-list">
-                                        <strong>Исходящие связи:</strong>
-                                        <ul>
-                                            {entity.sourceRelationships.map((rel: any) => (
-                                                <li key={rel.id} className="relationship-item">
-                                                    <span>
-                                                        {rel.relationshipType}: {rel.targetEntity?.name || 'Неизвестно'}
-                                                        <span className="text-secondary" style={{ marginLeft: '5px' }}>({rel.sourceFieldName})</span>
+                        {!showERDiagram && (
+                        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                            <SortableContext items={entityOrder.map(e => e.id)} strategy={verticalListSortingStrategy}>
+                            {entityOrder.map((entity: Entity) => {
+                                const svcName = entity.serviceName || entity.name;
+                                const isMicro = currentProject.architectureType === 'Microservices';
+                                const allSvcNames = Array.from(new Set((currentProject.entities || []).map(e => e.serviceName || e.name)));
+                                const colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6'];
+                                const colorMap: Record<string, string> = {};
+                                allSvcNames.forEach((g, i) => { colorMap[g] = colors[i % colors.length]; });
+                                const svcColor = colorMap[svcName] || '#6366f1';
+                                return (
+                                    <SortableEntityCard key={entity.id} id={entity.id}>
+                                    <div className="entity-card">
+                                        <div className="entity-header">
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span className="drag-handle" title="Перетащить">⠿</span>
+                                                <h3>{entity.name}</h3>
+                                                {isMicro && (
+                                                    <span style={{ padding: '1px 8px', borderRadius: '10px', background: svcColor + '22', color: svcColor, border: `1px solid ${svcColor}44`, fontSize: '0.72rem', fontWeight: 600 }}>
+                                                        ⚙️ {svcName}-service
                                                     </span>
+                                                )}
+                                            </div>
+                                            <div className="entity-actions">
+                                                <button
+                                                    className="btn btn-primary btn-small"
+                                                    onClick={() => {
+                                                        setSelectedEntityId(entity.id);
+                                                        setEditingField(null);
+                                                        setShowFieldModal(true);
+                                                    }}
+                                                >
+                                                    + Поле
+                                                </button>
+                                                {isMicro && (
                                                     <button
-                                                        className="btn btn-danger btn-small"
-                                                        onClick={() => handleDeleteRelationship(rel.id)}
+                                                        className="btn btn-secondary btn-small"
+                                                        title="Изменить имя микросервиса"
+                                                        onClick={() => handleChangeServiceName(entity.id, entity.serviceName, entity.name)}
                                                     >
-                                                        x
+                                                        ⚙️ Сервис
                                                     </button>
-                                                </li>
-                                            ))}
-                                        </ul>
+                                                )}
+                                                <button
+                                                    className="btn btn-danger btn-small"
+                                                    onClick={() => handleDeleteEntity(entity.id)}
+                                                >
+                                                    Удалить
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {entity.fields && entity.fields.length > 0 && (
+                                            <div className="table-container">
+                                                <table style={{ marginBottom: '15px' }}>
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Имя</th>
+                                                            <th>Тип</th>
+                                                            <th>Атрибуты</th>
+                                                            <th>Действия</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {entity.fields.map((field: Field) => (
+                                                            <tr key={field.id}>
+                                                                <td>{field.name}</td>
+                                                                <td>{field.dataType}</td>
+                                                                <td>
+                                                                    {field.isRequired ? <span className="badge badge-warning">Обяз.</span> : ''}
+                                                                    {field.isUnique ? <span className="badge badge-info">Уник.</span> : ''}
+                                                                    {field.isPrimaryKey ? <span className="badge badge-success">Ключ</span> : ''}
+                                                                </td>
+                                                                <td>
+                                                                    <div style={{ display: 'flex', gap: '5px' }}>
+                                                                        <button
+                                                                            className="btn btn-secondary btn-small"
+                                                                            onClick={() => {
+                                                                                setSelectedEntityId(entity.id);
+                                                                                setEditingField(field);
+                                                                                setShowFieldModal(true);
+                                                                            }}
+                                                                        >
+                                                                            ✏️
+                                                                        </button>
+                                                                        <button
+                                                                            className="btn btn-danger btn-small"
+                                                                            onClick={() => handleDeleteField(field.id)}
+                                                                        >
+                                                                            🗑️
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+
+                                        {/* Исходящие связи (из полей Relationship и таблицы Relationships) */}
+                                        {(() => {
+                                            const outgoing = getOutgoingRelationships(entity, currentProject?.entities ?? []);
+                                            if (outgoing.length === 0) return null;
+                                            return (
+                                            <div className="relationships-list">
+                                                <strong>Исходящие связи:</strong>
+                                                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                                                    {outgoing.map(rel => (
+                                                        <li key={`${rel.sourceFieldName}-${rel.targetEntityName}`} className="relationship-item">
+                                                            <span>
+                                                                <span className="badge badge-info" style={{ marginRight: '6px' }}>
+                                                                    {formatRelationshipType(rel.relationshipType)}
+                                                                </span>
+                                                                → {rel.targetEntityName}
+                                                                <span className="text-secondary" style={{ marginLeft: '5px' }}>({rel.sourceFieldName})</span>
+                                                            </span>
+                                                            <button
+                                                                className="btn btn-danger btn-small"
+                                                                onClick={() => handleDeleteOutgoingRelationship(entity, rel)}
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                            );
+                                        })()}
                                     </div>
-                                )}
-                            </div>
-                        );
-                        })}
+                                    </SortableEntityCard>
+                                );
+                            })}
+                            </SortableContext>
+                        </DndContext>
+                        )}
 
                         {/* Карточка auth-service (показывается при включённой аутентификации) */}
                         {(() => {
@@ -654,7 +1167,12 @@ function Dashboard({ onNavigate }: DashboardProps) {
                             } catch {}
                             return (
                                 <div className="empty-state">
-                                    Нет сущностей. Создайте первую сущность для вашего проекта.
+                                    <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🧩</div>
+                                    <h3>Нет сущностей</h3>
+                                    <p>Создайте первую сущность (таблицу / модель) для вашего проекта, чтобы начать генерацию кода.</p>
+                                    <button className="btn btn-primary" onClick={() => setShowNewEntity(true)}>
+                                        + Добавить сущность
+                                    </button>
                                 </div>
                             );
                         })()}
@@ -663,13 +1181,34 @@ function Dashboard({ onNavigate }: DashboardProps) {
 
                 {!currentProject && (
                     <div className="empty-state">
-                        Выберите проект из списка слева или создайте новый проект.
+                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚡</div>
+                        <h3>Добро пожаловать в CodeForge</h3>
+                        <p>Выберите проект из списка слева или создайте новый, чтобы начать генерацию backend-кода.</p>
+                        <button className="btn btn-primary" onClick={() => setShowNewProject(true)}>
+                            + Создать проект
+                        </button>
                     </div>
                 )}
             </div>
 
             {/* Модал нового проекта */}
             {showNewProject && <NewProjectModal onClose={() => setShowNewProject(false)} onCreate={handleNewProject} />}
+
+            {/* Модал шаблонов */}
+            {showTemplates && (
+                <ProjectTemplatesModal
+                    onClose={() => setShowTemplates(false)}
+                    onCreate={handleCreateFromTemplate}
+                />
+            )}
+
+            {/* Модал истории генераций */}
+            {showHistory && (
+                <GenerationHistoryModal
+                    onClose={() => setShowHistory(false)}
+                    filterProjectId={currentProject?.id}
+                />
+            )}
 
             {/* Модал новой сущности */}
             {showNewEntity && <NewEntityModal onClose={() => setShowNewEntity(false)} onCreate={handleNewEntity} isMicroservices={currentProject?.architectureType === 'Microservices'} />}

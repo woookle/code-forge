@@ -250,9 +250,16 @@ docker-compose up --build
 ```bash
 cd CodeForgeAPI
 
-# Настройте переменные окружения
-cp appsettings.Development.json appsettings.Development.json.local
-# Укажите ConnectionStrings, JWT:Secret, Email:* в appsettings.Development.json
+# Создайте локальный файл конфигурации из шаблона
+# Windows (PowerShell):
+copy appsettings.example.json appsettings.json
+# Linux / macOS:
+# cp appsettings.example.json appsettings.json
+
+# Откройте appsettings.json и укажите свои значения:
+# - ConnectionStrings:DefaultConnection — PostgreSQL
+# - EmailSettings:SenderEmail / Password — SMTP (для регистрации и сброса пароля)
+# - JwtSettings:Secret — секретный ключ JWT (минимум 32 символа)
 
 # Примените миграции
 dotnet ef database update
@@ -262,6 +269,8 @@ dotnet run
 # → http://localhost:5123
 # → Swagger: http://localhost:5123/swagger
 ```
+
+> **Важно:** файл `appsettings.json` добавлен в `.gitignore` и **не попадает в репозиторий** — в git хранится только `appsettings.example.json` с placeholder-значениями. Каждый разработчик создаёт свой локальный `appsettings.json` из шаблона.
 
 #### 2. Frontend
 
@@ -309,6 +318,8 @@ CodeForge/
 │   ├── Migrations/                   # EF Core миграции
 │   ├── Utilities/
 │   │   └── NameValidator.cs
+│   ├── appsettings.example.json      # Шаблон конфигурации (коммитится в git)
+│   ├── appsettings.json              # Локальные секреты (создаётся вручную, в .gitignore)
 │   ├── Dockerfile
 │   └── Program.cs
 │
@@ -321,22 +332,40 @@ CodeForge/
 │   │   │   ├── auth/authSlice.ts     # Аутентификация
 │   │   │   └── projects/projectsSlice.ts
 │   │   ├── components/
-│   │   │   ├── Dashboard.tsx         # Главная страница
-│   │   │   ├── Login.tsx
-│   │   │   ├── Profile.tsx
-│   │   │   ├── AdminPanel.tsx
-│   │   │   ├── MicroservicesPreview.tsx  # Схема микросервисов
-│   │   │   ├── MonolithPreview.tsx       # Схема монолита
-│   │   │   ├── TwoFactorSetupModal.tsx
-│   │   │   ├── TotpModal.tsx
-│   │   │   └── FAQWidget.tsx
+│   │   │   ├── auth/                 # Аутентификация
+│   │   │   │   ├── Login.tsx
+│   │   │   │   ├── VerificationModal.tsx
+│   │   │   │   ├── ResetPasswordModal.tsx
+│   │   │   │   ├── PersonalDataModal.tsx
+│   │   │   │   ├── TotpModal.tsx
+│   │   │   │   └── TwoFactorSetupModal.tsx
+│   │   │   ├── dashboard/            # Рабочая область / проекты
+│   │   │   │   ├── Dashboard.tsx     # Главная страница
+│   │   │   │   ├── ERDiagram.tsx     # ER-диаграмма
+│   │   │   │   ├── FAQWidget.tsx
+│   │   │   │   ├── MicroservicesPreview.tsx  # Схема микросервисов
+│   │   │   │   ├── MonolithPreview.tsx       # Схема монолита
+│   │   │   │   ├── ProjectTemplatesModal.tsx # Шаблоны проектов
+│   │   │   │   └── GenerationHistoryModal.tsx
+│   │   │   ├── profile/
+│   │   │   │   └── Profile.tsx       # Профиль пользователя
+│   │   │   ├── admin/
+│   │   │   │   └── AdminPanel.tsx    # Админ-панель
+│   │   │   └── common/               # Общие компоненты
+│   │   │       ├── ConfirmModal.tsx
+│   │   │       ├── AchievementToast.tsx
+│   │   │       └── SplashScreen.tsx
 │   │   ├── context/
 │   │   │   └── ConfirmContext.tsx
+│   │   ├── data/
+│   │   │   └── projectTemplates.ts   # Шаблоны готовых проектов
 │   │   ├── types/
 │   │   │   ├── index.ts
 │   │   │   └── auth.ts
 │   │   └── utils/
-│   │       └── api.ts                # Axios instance
+│   │       ├── api.ts                # Axios instance
+│   │       ├── generationHistory.ts  # История генераций
+│   │       └── entityRelationships.ts
 │   └── public/
 │       ├── logo.svg
 │       └── logo_white.svg
@@ -518,32 +547,56 @@ MyProject/
 
 ## 🔑 Настройка окружения
 
-### Backend — `appsettings.Development.json`
+### Backend — `appsettings.json`
+
+Файл `appsettings.json` **не хранится в репозитории**. Скопируйте шаблон и заполните своими данными:
+
+```bash
+cd CodeForgeAPI
+copy appsettings.example.json appsettings.json   # Windows
+# cp appsettings.example.json appsettings.json   # Linux / macOS
+```
+
+Пример содержимого (`appsettings.example.json`):
 
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=codeforge;Username=postgres;Password=yourpassword"
+    "DefaultConnection": "Host=localhost;Database=codeforge;Username=postgres;Password=YOUR_DB_PASSWORD"
   },
-  "Jwt": {
-    "Secret": "your-super-secret-key-min-32-chars",
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "EmailSettings": {
+    "MailServer": "smtp.gmail.com",
+    "MailPort": 587,
+    "UseSsl": true,
+    "UseStartTls": true,
+    "SenderName": "CodeForge",
+    "SenderEmail": "your-email@gmail.com",
+    "Password": "your-app-password"
+  },
+  "JwtSettings": {
+    "Secret": "YourSuperSecretKeyThatIsAtLeast32CharactersLong!@#$%",
     "Issuer": "CodeForgeAPI",
     "Audience": "CodeForgeUI",
-    "ExpiryMinutes": 60
-  },
-  "Email": {
-    "SmtpServer": "smtp.gmail.com",
-    "SmtpPort": 587,
-    "SenderEmail": "your-email@gmail.com",
-    "SenderPassword": "your-app-password",
-    "SenderName": "CodeForge"
-  },
-  "FileStorage": {
-    "UploadPath": "wwwroot/avatars",
-    "BaseUrl": "http://localhost:5123"
+    "ExpirationMinutes": 1440
   }
 }
 ```
+
+| Параметр | Описание |
+|---|---|
+| `ConnectionStrings:DefaultConnection` | Строка подключения к PostgreSQL |
+| `EmailSettings:SenderEmail` | Email отправителя (Gmail и др.) |
+| `EmailSettings:Password` | App Password для SMTP (не обычный пароль аккаунта) |
+| `JwtSettings:Secret` | Секрет для подписи JWT-токенов (≥ 32 символов) |
+
+> Для Gmail создайте [App Password](https://myaccount.google.com/apppasswords) в настройках Google-аккаунта с включённой 2FA.
 
 ### Frontend — `.env`
 

@@ -15,4 +15,5 @@ public interface IAuthService
     Task<bool> EnableTwoFactorAsync(Guid userId, string code);
     Task<bool> DisableTwoFactorAsync(Guid userId, string code);
     Task<AuthResponse?> LoginWithTotpAsync(LoginWith2FARequest request);
+    Task<bool> ChangePasswordAsync(Guid userId, ChangePasswordRequest request);
 }

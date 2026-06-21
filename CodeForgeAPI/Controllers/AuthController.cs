@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using CodeForgeAPI.Data;
 using CodeForgeAPI.DTOs.Auth;
+using CodeForgeAPI.Models;
 using CodeForgeAPI.Services;
 
 namespace CodeForgeAPI.Controllers;
@@ -14,12 +15,27 @@ public class AuthController : ControllerBase
     private readonly IAuthService _authService;
     private readonly ApplicationDbContext _context;
     private readonly IWebHostEnvironment _env;
-    
-    public AuthController(IAuthService authService, ApplicationDbContext context, IWebHostEnvironment env)
+    private readonly IAchievementService _achievements;
+
+    public AuthController(IAuthService authService, ApplicationDbContext context, IWebHostEnvironment env, IAchievementService achievements)
     {
         _authService = authService;
         _context = context;
         _env = env;
+        _achievements = achievements;
+    }
+
+    private void LogActivity(Guid userId, string eventType, string description, string? meta = null)
+    {
+        _context.AccountActivities.Add(new AccountActivity
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            EventType = eventType,
+            Description = description,
+            Meta = meta,
+            CreatedAt = DateTime.UtcNow,
+        });
     }
     
     [HttpPost("send-code")]
@@ -187,10 +203,20 @@ public class AuthController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
 
-        var result = await _authService.EnableTwoFactorAsync(Guid.Parse(userId), request.Code);
+        var uid = Guid.Parse(userId);
+        var result = await _authService.EnableTwoFactorAsync(uid, request.Code);
         if (!result) return BadRequest(new { message = "Invalid TOTP code. Please check the code in your authenticator app." });
 
-        return Ok(new { message = "Two-factor authentication enabled successfully" });
+        LogActivity(uid, "2fa_enabled", "Двухфакторная аутентификация включена");
+        await _context.SaveChangesAsync();
+
+        var newAchievements = await _achievements.CheckAndUnlockAsync(uid);
+
+        return Ok(new
+        {
+            message = "Two-factor authentication enabled successfully",
+            newAchievements = newAchievements.Select(a => new { a.Id, a.Icon, a.Title, a.Description, a.Color }),
+        });
     }
 
     [Authorize]
@@ -246,11 +272,37 @@ public class AuthController : ControllerBase
         }
 
         user.AvatarUrl = $"/avatars/{fileName}";
+        LogActivity(user.Id, "avatar_changed", "Аватар профиля обновлён");
         await _context.SaveChangesAsync();
 
-        return Ok(new { avatarUrl = user.AvatarUrl });
+        // Проверяем достижение за аватар
+        var newAchievements = await _achievements.CheckAndUnlockAsync(user.Id);
+
+        return Ok(new
+        {
+            avatarUrl = user.AvatarUrl,
+            newAchievements = newAchievements.Select(a => new { a.Id, a.Icon, a.Title, a.Description, a.Color }),
+        });
     }
     
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            return Unauthorized();
+
+        var success = await _authService.ChangePasswordAsync(userId, request);
+        if (!success)
+            return BadRequest(new { message = "Неверный текущий пароль" });
+
+        LogActivity(userId, "password_changed", "Пароль аккаунта изменён");
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Пароль успешно изменён" });
+    }
+
     [HttpPost("logout")]
     public IActionResult Logout()
     {

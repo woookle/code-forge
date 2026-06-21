@@ -66,18 +66,29 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
             // Messaging
             files[$"{basePath}/src/messaging/publisher.js"] =
                 GeneratePublisher(svc.Entities);
-            // Pass entity names from OTHER services so subscriber binds to entity-level routing keys (e.g. "orderItem.created")
-            var otherEntityNames = serviceInfos
+            // Передаём объекты Entity из других сервисов — подписчик генерирует реальные cache-handlers
+            var otherEntities = serviceInfos
                 .Where(s => s.SafeName != svc.SafeName)
-                .SelectMany(s => s.Entities.Select(e => e.Name))
+                .SelectMany(s => s.Entities)
                 .ToList();
             files[$"{basePath}/src/messaging/subscriber.js"] =
-                GenerateSubscriber(svc.SafeName, svc.Entities, otherEntityNames);
+                GenerateSubscriber(svc.SafeName, svc.Entities, otherEntities);
+            // Генерируем cache-модели для сущностей из других сервисов (локальные снимки данных)
+            foreach (var otherEntity in otherEntities)
+                files[$"{basePath}/src/models/Cached{otherEntity.Name}.js"] =
+                    GenerateCacheModel(otherEntity.Name);
 
             // Middleware
             files[$"{basePath}/src/middleware/errorHandler.js"] = GenerateErrorHandler();
             files[$"{basePath}/src/middleware/notFound.js"] = GenerateNotFound();
             files[$"{basePath}/src/middleware/asyncHandler.js"] = GenerateAsyncHandler();
+            // Stateless JWT middleware — каждый сервис верифицирует токен независимо по JWT_SECRET
+            if (auth?.Enabled == true)
+            {
+                files[$"{basePath}/src/middleware/authMiddleware.js"] = GenerateAuthMiddleware();
+                if (auth.EnableRoles)
+                    files[$"{basePath}/src/middleware/roleMiddleware.js"] = GenerateRoleMiddleware();
+            }
 
             // Config
             files[$"{basePath}/src/config/database.js"] = GenerateDbConfig(svc.DbName);
@@ -117,10 +128,17 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
             GenerateAuthMicroserviceFiles(files, projectName, auth, authPort, authPackageName, authDbName);
         }
 
+        var svcList = serviceInfos.Select(s => (s.SafeName, s.PackageName, s.Port, s.DbName)).ToList();
+
+        // Nginx API Gateway
+        files[$"{projectName}/nginx/nginx.conf"] = GenerateNginxConfig(svcList, authSvc);
+
+        // Корневой .env с секретами и общими переменными
+        files[$"{projectName}/.env"] = GenerateRootEnv(svcList, authSvc, auth);
+        files[$"{projectName}/.env.example"] = GenerateRootEnvExample(svcList, authSvc, auth);
+
         // Root docker-compose.yml
-        files[$"{projectName}/docker-compose.yml"] = GenerateDockerCompose(projectName, serviceInfos
-            .Select(s => (s.SafeName, s.PackageName, s.Port, s.DbName))
-            .ToList(), authSvc);
+        files[$"{projectName}/docker-compose.yml"] = GenerateDockerCompose(projectName, svcList, authSvc);
 
         // Root README.md
         files[$"{projectName}/README.md"] = GenerateReadme(project, projectName, serviceInfos
@@ -331,7 +349,7 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
         sb.AppendLine("const router = express.Router();");
         sb.AppendLine("const { validationResult } = require('express-validator');");
         if (auth?.Enabled == true && anyProt)
-            sb.AppendLine("const { verifyToken } = require('../../../auth-service/src/middleware/authMiddleware');");
+            sb.AppendLine("const { verifyToken } = require('../middleware/authMiddleware');");
         sb.AppendLine($"const {{ getAll{namePlural}, get{name}ById, create{name}, update{name}, patch{name}, delete{name} }} = require('../controllers/{nameLower}Controller');");
         sb.AppendLine($"const {{ create{name}Rules, update{name}Rules }} = require('../validation/{nameLower}Validation');");
         sb.AppendLine();
@@ -594,45 +612,56 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
     }
 
     // otherEntityNames: entity names from all other services (used as routing key prefixes)
-    private string GenerateSubscriber(string serviceName, List<Entity> ownEntities, List<string> otherEntityNames)
+    private string GenerateSubscriber(string serviceName, List<Entity> ownEntities, List<Entity> otherEntities)
     {
         var sb = new StringBuilder();
+
+        // Импортируем cache-модели для каждой сущности из других сервисов
+        foreach (var e in otherEntities)
+            sb.AppendLine($"const Cached{e.Name} = require('../models/Cached{e.Name}');");
 
         sb.AppendLine("const amqp = require('amqplib');");
         sb.AppendLine();
         sb.AppendLine("const EXCHANGE = 'events';");
         sb.AppendLine($"const QUEUE = '{serviceName.ToLower()}-service-queue';");
+        sb.AppendLine($"const DLQ = '{serviceName.ToLower()}-service-dlq';");
         sb.AppendLine();
 
-        // Binding keys: subscribe to entity-level events from other services
         var bindingKeys = new List<string>();
-        foreach (var name in otherEntityNames)
-            bindingKeys.AddRange(new[] { $"{LowerFirst(name)}.created", $"{LowerFirst(name)}.updated", $"{LowerFirst(name)}.deleted" });
+        foreach (var e in otherEntities)
+            bindingKeys.AddRange(new[] { $"{LowerFirst(e.Name)}.created", $"{LowerFirst(e.Name)}.updated", $"{LowerFirst(e.Name)}.deleted" });
 
         var bindingKeysStr = string.Join(", ", bindingKeys.Select(k => $"'{k}'"));
 
-        sb.AppendLine("// Routing keys to subscribe to (events from other services)");
         sb.AppendLine($"const BINDING_KEYS = [{bindingKeysStr}];");
         sb.AppendLine();
         sb.AppendLine("async function start() {");
         sb.AppendLine("  const url = process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672';");
         sb.AppendLine("  try {");
         sb.AppendLine("    const conn = await amqp.connect(url);");
+        sb.AppendLine("    conn.on('error', (err) => { console.error('[RabbitMQ] Connection error:', err.message); setTimeout(start, 5000); });");
         sb.AppendLine("    const channel = await conn.createChannel();");
+        sb.AppendLine("    channel.prefetch(10);");
         sb.AppendLine("    await channel.assertExchange(EXCHANGE, 'topic', { durable: true });");
-        sb.AppendLine("    const q = await channel.assertQueue(QUEUE, { durable: true });");
+        sb.AppendLine("    // Dead Letter Queue для необработанных сообщений");
+        sb.AppendLine($"    await channel.assertQueue(DLQ, {{ durable: true }});");
+        sb.AppendLine($"    const q = await channel.assertQueue(QUEUE, {{ durable: true, arguments: {{ 'x-dead-letter-exchange': '', 'x-dead-letter-routing-key': DLQ }} }});");
         sb.AppendLine("    for (const key of BINDING_KEYS) {");
         sb.AppendLine("      await channel.bindQueue(q.queue, EXCHANGE, key);");
         sb.AppendLine("    }");
-        sb.AppendLine("    console.log(`✅ RabbitMQ subscriber listening on queue: ${QUEUE}`);");
-        sb.AppendLine("    channel.consume(q.queue, (msg) => {");
+        sb.AppendLine($"    console.log('✅ [{serviceName.ToLower()}-service] RabbitMQ subscriber ready, queue:', QUEUE);");
+        sb.AppendLine("    channel.consume(q.queue, async (msg) => {");
         sb.AppendLine("      if (!msg) return;");
         sb.AppendLine("      const key = msg.fields.routingKey;");
         sb.AppendLine("      let payload;");
-        sb.AppendLine("      try { payload = JSON.parse(msg.content.toString()); } catch { payload = {}; }");
-        sb.AppendLine("      console.log(`[Subscriber] Received event: ${key}`, payload);");
-        sb.AppendLine("      handleEvent(key, payload);");
-        sb.AppendLine("      channel.ack(msg);");
+        sb.AppendLine("      try {");
+        sb.AppendLine("        payload = JSON.parse(msg.content.toString());");
+        sb.AppendLine("        await handleEvent(key, payload);");
+        sb.AppendLine("        channel.ack(msg);");
+        sb.AppendLine("      } catch (err) {");
+        sb.AppendLine("        console.error(`[Subscriber] Failed to handle event ${key}:`, err.message);");
+        sb.AppendLine("        channel.nack(msg, false, false); // → DLQ");
+        sb.AppendLine("      }");
         sb.AppendLine("    });");
         sb.AppendLine("  } catch (err) {");
         sb.AppendLine("    console.error('❌ RabbitMQ subscriber error:', err.message);");
@@ -641,28 +670,38 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("/**");
-        sb.AppendLine(" * Handle incoming cross-service events.");
-        sb.AppendLine(" * Add your business logic here (e.g. cache updates, cascades).");
+        sb.AppendLine(" * Обрабатывает входящие события из других сервисов.");
+        sb.AppendLine(" * Локальный кеш (Cached*) хранит снимок данных для быстрых запросов без межсервисных HTTP-вызовов.");
         sb.AppendLine(" */");
-        sb.AppendLine("function handleEvent(routingKey, payload) {");
-        if (otherEntityNames.Count == 0)
+        sb.AppendLine("async function handleEvent(routingKey, payload) {");
+        if (otherEntities.Count == 0)
         {
-            sb.AppendLine("  // No other services defined yet.");
+            sb.AppendLine("  // Нет подписок на другие сервисы.");
         }
         else
         {
             sb.AppendLine("  switch (routingKey) {");
-            foreach (var entityName in otherEntityNames)
+            foreach (var entity in otherEntities)
             {
-                sb.AppendLine($"    case '{LowerFirst(entityName)}.created':");
-                sb.AppendLine($"      // TODO: handle {entityName} created event");
-                sb.AppendLine("      break;");
-                sb.AppendLine($"    case '{LowerFirst(entityName)}.updated':");
-                sb.AppendLine($"      // TODO: handle {entityName} updated event");
-                sb.AppendLine("      break;");
-                sb.AppendLine($"    case '{LowerFirst(entityName)}.deleted':");
-                sb.AppendLine($"      // TODO: handle {entityName} deleted event (e.g. remove references)");
-                sb.AppendLine("      break;");
+                var key = LowerFirst(entity.Name);
+                sb.AppendLine($"    case '{key}.created':");
+                sb.AppendLine($"    case '{key}.updated': {{");
+                sb.AppendLine($"      await Cached{entity.Name}.findOneAndUpdate(");
+                sb.AppendLine($"        {{ _externalId: payload._id || payload.id }},");
+                sb.AppendLine($"        {{ ...payload, _externalId: payload._id || payload.id }},");
+                sb.AppendLine($"        {{ upsert: true, new: true }}");
+                sb.AppendLine($"      );");
+                sb.AppendLine($"      console.log(`[{serviceName.ToLower()}] Cached {entity.Name} ${{payload._id || payload.id}}`);");
+                sb.AppendLine($"      break;");
+                sb.AppendLine($"    }}");
+                sb.AppendLine($"    case '{key}.deleted': {{");
+                sb.AppendLine($"      await Cached{entity.Name}.findOneAndUpdate(");
+                sb.AppendLine($"        {{ _externalId: payload.id || payload._id }},");
+                sb.AppendLine($"        {{ $set: {{ _deletedAt: new Date() }} }}");
+                sb.AppendLine($"      );");
+                sb.AppendLine($"      console.log(`[{serviceName.ToLower()}] Marked Cached{entity.Name} as deleted`);");
+                sb.AppendLine($"      break;");
+                sb.AppendLine($"    }}");
             }
             sb.AppendLine("    default:");
             sb.AppendLine("      console.log(`[Subscriber] Unhandled event: ${routingKey}`);");
@@ -674,6 +713,29 @@ public class NodeJSMongoDBMicroservicesGenerator : ITemplateGenerator
 
         return sb.ToString();
     }
+
+    /// <summary>Генерирует Mongoose cache-модель для локального хранения снимков данных из другого сервиса.</summary>
+    private string GenerateCacheModel(string entityName) =>
+$@"const mongoose = require('mongoose');
+
+/**
+ * Локальный кеш данных из {entityName}-сервиса.
+ * Обновляется через RabbitMQ-события: {LowerFirst(entityName)}.created/updated/deleted.
+ * Используется для чтения без синхронных HTTP-запросов к {entityName}-сервису.
+ */
+const Cached{entityName}Schema = new mongoose.Schema(
+  {{
+    _externalId: {{ type: String, required: true, unique: true, index: true }},
+    _deletedAt:  {{ type: Date, default: null }},
+  }},
+  {{ strict: false, timestamps: true }}  // strict: false — принимаем любые поля из payload
+);
+
+Cached{entityName}Schema.index({{ _deletedAt: 1 }});
+Cached{entityName}Schema.index({{ updatedAt: -1 }});
+
+module.exports = mongoose.model('Cached{entityName}', Cached{entityName}Schema);
+";
 
     // ─────────────────────────── CONFIG ───────────────────────────
 
@@ -894,13 +956,40 @@ coverage/
         sb.AppendLine();
         sb.AppendLine("services:");
         sb.AppendLine();
+
+        // ── API Gateway ──────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── API Gateway (единая точка входа: http://localhost:80) ─────────────────────");
+        sb.AppendLine("  nginx:");
+        sb.AppendLine("    image: nginx:1.25-alpine");
+        sb.AppendLine("    restart: unless-stopped");
+        sb.AppendLine("    ports:");
+        sb.AppendLine("      - \"80:80\"");
+        sb.AppendLine("    volumes:");
+        sb.AppendLine("      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro");
+        sb.AppendLine("    networks:");
+        sb.AppendLine("      - gateway");
+        sb.AppendLine("      - backend");
+        sb.AppendLine("    depends_on:");
+        if (authService.HasValue)
+            sb.AppendLine("      - auth-service");
+        foreach (var svc in services)
+            sb.AppendLine($"      - {svc.SafeName.ToLower()}-service");
+        sb.AppendLine("    healthcheck:");
+        sb.AppendLine("      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost/health\"]");
+        sb.AppendLine("      interval: 15s");
+        sb.AppendLine("      timeout: 5s");
+        sb.AppendLine("      retries: 3");
+        sb.AppendLine();
+
+        // ── Message Broker ───────────────────────────────────────────────────────
         sb.AppendLine("  # ── Message Broker ──────────────────────────────────────────────────────────");
         sb.AppendLine("  rabbitmq:");
         sb.AppendLine("    image: rabbitmq:3.13-management-alpine");
         sb.AppendLine("    restart: unless-stopped");
         sb.AppendLine("    ports:");
-        sb.AppendLine("      - \"5672:5672\"   # AMQP");
-        sb.AppendLine("      - \"15672:15672\" # Management UI (guest/guest)");
+        sb.AppendLine("      - \"15672:15672\" # Management UI → http://localhost:15672 (guest/guest)");
+        sb.AppendLine("    networks:");
+        sb.AppendLine("      - messaging");
         sb.AppendLine("    volumes:");
         sb.AppendLine("      - rabbitmq_data:/var/lib/rabbitmq");
         sb.AppendLine("    healthcheck:");
@@ -909,12 +998,16 @@ coverage/
         sb.AppendLine("      timeout: 5s");
         sb.AppendLine("      retries: 10");
         sb.AppendLine();
-        sb.AppendLine("  # ── Databases ────────────────────────────────────────────────────────────────");
+
+        // ── Databases ────────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── Databases (database-per-service) ────────────────────────────────────────");
         if (authService.HasValue)
         {
             sb.AppendLine($"  {authService.Value.DbName}:");
             sb.AppendLine("    image: mongo:7-jammy");
             sb.AppendLine("    restart: unless-stopped");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - data");
             sb.AppendLine($"    volumes:");
             sb.AppendLine($"      - {authService.Value.DbName}_data:/data/db");
             sb.AppendLine("    healthcheck:");
@@ -929,6 +1022,8 @@ coverage/
             sb.AppendLine($"  {svc.DbName}:");
             sb.AppendLine("    image: mongo:7-jammy");
             sb.AppendLine("    restart: unless-stopped");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - data");
             sb.AppendLine($"    volumes:");
             sb.AppendLine($"      - {svc.DbName}_data:/data/db");
             sb.AppendLine("    healthcheck:");
@@ -938,7 +1033,9 @@ coverage/
             sb.AppendLine("      retries: 5");
             sb.AppendLine();
         }
-        sb.AppendLine("  # ── Microservices ─────────────────────────────────────────────────────────────");
+
+        // ── Microservices ─────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── Microservices ────────────────────────────────────────────────────────────");
         if (authService.HasValue)
         {
             sb.AppendLine("  auth-service:");
@@ -946,19 +1043,26 @@ coverage/
             sb.AppendLine("      context: ./services/auth-service");
             sb.AppendLine("      dockerfile: Dockerfile");
             sb.AppendLine("    restart: unless-stopped");
-            sb.AppendLine($"    ports:");
-            sb.AppendLine($"      - \"{authService.Value.Port}:{authService.Value.Port}\"");
+            sb.AppendLine("    env_file: .env");
             sb.AppendLine("    environment:");
             sb.AppendLine($"      - PORT={authService.Value.Port}");
-            sb.AppendLine("      - NODE_ENV=production");
             sb.AppendLine($"      - MONGODB_URI=mongodb://{authService.Value.DbName}:27017/{authService.Value.DbName}");
             sb.AppendLine("      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672");
-            sb.AppendLine("      - JWT_SECRET=CHANGE_ME_USE_A_LONG_RANDOM_SECRET");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - backend");
+            sb.AppendLine("      - messaging");
+            sb.AppendLine("      - data");
             sb.AppendLine("    depends_on:");
             sb.AppendLine($"      {authService.Value.DbName}:");
             sb.AppendLine("        condition: service_healthy");
             sb.AppendLine("      rabbitmq:");
             sb.AppendLine("        condition: service_healthy");
+            sb.AppendLine("    healthcheck:");
+            sb.AppendLine($"      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:{authService.Value.Port}/health\"]");
+            sb.AppendLine("      interval: 15s");
+            sb.AppendLine("      timeout: 5s");
+            sb.AppendLine("      retries: 5");
+            sb.AppendLine("      start_period: 15s");
             sb.AppendLine();
         }
         foreach (var svc in services)
@@ -969,15 +1073,15 @@ coverage/
             sb.AppendLine($"      context: ./services/{svcDirName}");
             sb.AppendLine("      dockerfile: Dockerfile");
             sb.AppendLine("    restart: unless-stopped");
-            sb.AppendLine($"    ports:");
-            sb.AppendLine($"      - \"{svc.Port}:{svc.Port}\"");
+            sb.AppendLine("    env_file: .env");
             sb.AppendLine("    environment:");
             sb.AppendLine($"      - PORT={svc.Port}");
-            sb.AppendLine("      - NODE_ENV=production");
             sb.AppendLine($"      - MONGODB_URI=mongodb://{svc.DbName}:27017/{svc.DbName}");
             sb.AppendLine("      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672");
-            if (authService.HasValue)
-                sb.AppendLine("      - JWT_SECRET=CHANGE_ME_USE_A_LONG_RANDOM_SECRET");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - backend");
+            sb.AppendLine("      - messaging");
+            sb.AppendLine("      - data");
             sb.AppendLine("    depends_on:");
             sb.AppendLine($"      {svc.DbName}:");
             sb.AppendLine("        condition: service_healthy");
@@ -986,10 +1090,26 @@ coverage/
             if (authService.HasValue)
             {
                 sb.AppendLine("      auth-service:");
-                sb.AppendLine("        condition: service_started");
+                sb.AppendLine("        condition: service_healthy");
             }
+            sb.AppendLine("    healthcheck:");
+            sb.AppendLine($"      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:{svc.Port}/health\"]");
+            sb.AppendLine("      interval: 15s");
+            sb.AppendLine("      timeout: 5s");
+            sb.AppendLine("      retries: 5");
+            sb.AppendLine("      start_period: 15s");
             sb.AppendLine();
         }
+
+        // ── Networks ──────────────────────────────────────────────────────────────
+        sb.AppendLine("networks:");
+        sb.AppendLine("  gateway:   # nginx ↔ microservices");
+        sb.AppendLine("  backend:   # межсервисные HTTP-запросы");
+        sb.AppendLine("  messaging: # сервисы ↔ RabbitMQ");
+        sb.AppendLine("  data:      # сервисы ↔ MongoDB (изолированная сеть баз данных)");
+        sb.AppendLine();
+
+        // ── Volumes ──────────────────────────────────────────────────────────────
         sb.AppendLine("volumes:");
         sb.AppendLine("  rabbitmq_data:");
         if (authService.HasValue) sb.AppendLine($"  {authService.Value.DbName}_data:");
@@ -997,6 +1117,128 @@ coverage/
             sb.AppendLine($"  {svc.DbName}_data:");
 
         return sb.ToString();
+    }
+
+    private string GenerateNginxConfig(
+        List<(string SafeName, string PackageName, int Port, string DbName)> services,
+        (string SafeName, string PackageName, int Port, string DbName)? authService = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("events {");
+        sb.AppendLine("  worker_connections 1024;");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("http {");
+        sb.AppendLine("  include       /etc/nginx/mime.types;");
+        sb.AppendLine("  default_type  application/octet-stream;");
+        sb.AppendLine("  sendfile      on;");
+        sb.AppendLine("  keepalive_timeout 65;");
+        sb.AppendLine();
+        sb.AppendLine("  # ── Upstream блоки (по одному на микросервис) ──────────────────────────────");
+        if (authService.HasValue)
+        {
+            sb.AppendLine("  upstream auth_service {");
+            sb.AppendLine($"    server auth-service:{authService.Value.Port};");
+            sb.AppendLine("  }");
+        }
+        foreach (var svc in services)
+        {
+            var upstreamName = svc.SafeName.ToLower().Replace("-", "_") + "_service";
+            sb.AppendLine($"  upstream {upstreamName} {{");
+            sb.AppendLine($"    server {svc.SafeName.ToLower()}-service:{svc.Port};");
+            sb.AppendLine("  }");
+        }
+        sb.AppendLine();
+        sb.AppendLine("  server {");
+        sb.AppendLine("    listen 80;");
+        sb.AppendLine("    server_name _;");
+        sb.AppendLine();
+        sb.AppendLine("    # ── Общие заголовки ──────────────────────────────────────────────────────");
+        sb.AppendLine("    proxy_http_version 1.1;");
+        sb.AppendLine("    proxy_set_header Host              $host;");
+        sb.AppendLine("    proxy_set_header X-Real-IP         $remote_addr;");
+        sb.AppendLine("    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;");
+        sb.AppendLine("    proxy_set_header X-Forwarded-Proto $scheme;");
+        sb.AppendLine("    proxy_set_header Upgrade           $http_upgrade;");
+        sb.AppendLine("    proxy_set_header Connection        'upgrade';");
+        sb.AppendLine("    proxy_cache_bypass $http_upgrade;");
+        sb.AppendLine();
+        sb.AppendLine("    # ── Health endpoint самого gateway ───────────────────────────────────────");
+        sb.AppendLine("    location = /health {");
+        sb.AppendLine("      access_log off;");
+        sb.AppendLine("      return 200 '{\"gateway\":\"ok\"}';");
+        sb.AppendLine("      add_header Content-Type application/json;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        if (authService.HasValue)
+        {
+            sb.AppendLine("    # ── Auth Service ─────────────────────────────────────────────────────────");
+            sb.AppendLine("    location /api/auth {");
+            sb.AppendLine("      proxy_pass http://auth_service;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    location /api-docs/auth {");
+            sb.AppendLine("      proxy_pass http://auth_service/api-docs;");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+        foreach (var svc in services)
+        {
+            var upstreamName = svc.SafeName.ToLower().Replace("-", "_") + "_service";
+            var apiPath = LowerFirst(Pluralize(svc.SafeName));
+            sb.AppendLine($"    # ── {svc.SafeName} Service ──────────────────────────────────────────────────");
+            sb.AppendLine($"    location /api/{apiPath} {{");
+            sb.AppendLine($"      proxy_pass http://{upstreamName};");
+            sb.AppendLine("    }");
+            sb.AppendLine($"    location /api-docs/{svc.SafeName.ToLower()} {{");
+            sb.AppendLine($"      proxy_pass http://{upstreamName}/api-docs;");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+
+        return sb.ToString();
+    }
+
+    private string GenerateRootEnv(
+        List<(string SafeName, string PackageName, int Port, string DbName)> services,
+        (string SafeName, string PackageName, int Port, string DbName)? authService,
+        AuthConfig? auth)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# ── Общие переменные окружения (используются всеми сервисами через env_file) ──");
+        sb.AppendLine("NODE_ENV=production");
+        sb.AppendLine("RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672");
+        if (auth?.Enabled == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("# ── JWT (общий секрет для всех сервисов) ─────────────────────────────────────");
+            sb.AppendLine("JWT_SECRET=CHANGE_ME_USE_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS");
+            if (auth.EnableRefreshTokens)
+                sb.AppendLine("JWT_REFRESH_SECRET=CHANGE_ME_DIFFERENT_REFRESH_SECRET");
+            sb.AppendLine($"JWT_EXPIRES_IN={auth.TokenExpiryMinutes}m");
+        }
+        sb.AppendLine();
+        sb.AppendLine("# ── Email (опционально, только для auth-service) ──────────────────────────────");
+        sb.AppendLine("EMAIL_HOST=smtp.gmail.com");
+        sb.AppendLine("EMAIL_PORT=587");
+        sb.AppendLine("EMAIL_USER=your-email@gmail.com");
+        sb.AppendLine("EMAIL_PASS=your-app-password");
+        return sb.ToString();
+    }
+
+    private string GenerateRootEnvExample(
+        List<(string SafeName, string PackageName, int Port, string DbName)> services,
+        (string SafeName, string PackageName, int Port, string DbName)? authService,
+        AuthConfig? auth)
+    {
+        var content = GenerateRootEnv(services, authService, auth);
+        // Маскируем чувствительные значения в примере
+        return content
+            .Replace("CHANGE_ME_USE_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS", "<your-secret>")
+            .Replace("CHANGE_ME_DIFFERENT_REFRESH_SECRET", "<your-refresh-secret>")
+            .Replace("your-email@gmail.com", "you@example.com")
+            .Replace("your-app-password", "<gmail-app-password>");
     }
 
     // ─────────────────────────── README ───────────────────────────

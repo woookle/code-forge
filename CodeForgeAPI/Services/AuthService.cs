@@ -62,9 +62,9 @@ public class AuthService : IAuthService
         {
             Console.WriteLine($"[SendVerificationCode] Sending email to {email}...");
             await _emailService.SendEmailAsync(
-                email, 
-                "Подтверждение регистрации", 
-                $"<h1>Ваш код подтверждения: {code}</h1><p>Код действителен 15 минут.</p>"
+                email,
+                EmailTemplates.VerificationSubject,
+                EmailTemplates.VerificationCode(code)
             );
             Console.WriteLine($"[SendVerificationCode] Email sent successfully.");
             return true;
@@ -115,7 +115,20 @@ public class AuthService : IAuthService
         _context.VerificationTokens.Remove(token);
         
         await _context.SaveChangesAsync();
-        
+
+        try
+        {
+            await _emailService.SendEmailAsync(
+                user.Email,
+                EmailTemplates.WelcomeSubject,
+                EmailTemplates.Welcome(user.FirstName ?? "пользователь")
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Register] Welcome email failed: {ex.Message}");
+        }
+
         // Generate token
         var jwtToken = GenerateJwtToken(user);
         
@@ -266,9 +279,9 @@ public class AuthService : IAuthService
         try 
         {
             await _emailService.SendEmailAsync(
-                email, 
-                "Сброс пароля", 
-                $"<h1>Код для сброса пароля: {code}</h1><p>Код действителен 15 минут.</p>"
+                email,
+                EmailTemplates.PasswordResetSubject,
+                EmailTemplates.PasswordResetCode(code)
             );
             return true;
         }
@@ -406,5 +419,19 @@ public class AuthService : IAuthService
         );
         
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    public async Task<bool> ChangePasswordAsync(Guid userId, ChangePasswordRequest request)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return false;
+
+        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+            return false;
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return true;
     }
 }

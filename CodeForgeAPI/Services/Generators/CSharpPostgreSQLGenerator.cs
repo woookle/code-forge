@@ -951,7 +951,19 @@ builder.Services.AddCors(options =>
 
 // Health checks
 builder.Services.AddHealthChecks()
-    .AddNpgsql(builder.Configuration.GetConnectionString(""DefaultConnection"")!);
+    .AddCheck(""database"", () =>
+    {{
+        try
+        {{
+            using var conn = new Npgsql.NpgsqlConnection(builder.Configuration.GetConnectionString(""DefaultConnection""));
+            conn.Open();
+            return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy();
+        }}
+        catch
+        {{
+            return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy();
+        }}
+    }});
 {(auth?.Enabled == true ? @"
 // ── JWT Authentication ─────────────────────────────────────────────────
 var jwtSettings = builder.Configuration.GetSection(""JwtSettings"");
@@ -980,12 +992,11 @@ builder.Services.AddScoped<{projectName}.Services.TokenService>();" : "")}
 
 var app = builder.Build();
 
-// ─── Auto-migrate on startup (Development) ──────────────────────────────────
-if (app.Environment.IsDevelopment())
+// ─── Создание схемы БД при первом запуске ───────────────────────────────────
+using (var scope = app.Services.CreateScope())
 {{
-    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await db.Database.MigrateAsync();
+    await db.Database.EnsureCreatedAsync();
 }}
 
 // ─── Middleware pipeline ─────────────────────────────────────────────────────
@@ -1029,7 +1040,6 @@ app.Run();
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include=""Npgsql.EntityFrameworkCore.PostgreSQL"" Version=""9.0.0"" />
-    <PackageReference Include=""AspNetCore.HealthChecks.NpgSql"" Version=""9.0.0"" />
     <PackageReference Include=""Swashbuckle.AspNetCore"" Version=""6.9.0"" />
     <PackageReference Include=""Swashbuckle.AspNetCore.Annotations"" Version=""6.9.0"" />{authPackages}
   </ItemGroup>

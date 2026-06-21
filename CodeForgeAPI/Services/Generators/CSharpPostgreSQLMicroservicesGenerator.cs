@@ -114,9 +114,17 @@ public class CSharpPostgreSQLMicroservicesGenerator : ITemplateGenerator
             GenerateAuthMicroserviceFiles(files, projectName, auth, authPort, authPgPort, authDbName);
         }
 
+        var svcList = serviceInfos.Select(s => (s.SafeName, s.Port, s.PgPort, s.DbName)).ToList();
+
+        // Nginx API Gateway
+        files[$"{projectName}/nginx/nginx.conf"] = GenerateNginxConfig(svcList, authSvc);
+
+        // Корневые переменные окружения
+        files[$"{projectName}/.env"] = GenerateRootEnv(svcList, authSvc, auth);
+        files[$"{projectName}/.env.example"] = GenerateRootEnvExample(svcList, authSvc, auth);
+
         // Root docker-compose.yml
-        files[$"{projectName}/docker-compose.yml"] = GenerateDockerCompose(projectName,
-            serviceInfos.Select(s => (s.SafeName, s.Port, s.PgPort, s.DbName)).ToList(), authSvc);
+        files[$"{projectName}/docker-compose.yml"] = GenerateDockerCompose(projectName, svcList, authSvc);
 
         // Root README
         files[$"{projectName}/README.md"] = GenerateReadme(project, projectName,
@@ -588,10 +596,11 @@ public class RabbitMqPublisher : IEventPublisher, IDisposable
     private string GenerateSubscriber(string serviceName, List<Entity> ownEntities,
         List<string> otherEntityNames, string projectName)
     {
-        var bindingKeys = otherEntityNames.SelectMany(n => new[]
-        {
-            $"{LowerFirst(n)}.created", $"{LowerFirst(n)}.updated", $"{LowerFirst(n)}.deleted"
-        }).ToList();
+        var bindingKeys = otherEntityNames.Count == 0 ? new List<string>() :
+            otherEntityNames.SelectMany(n => new[]
+            {
+                $"{LowerFirst(n)}.created", $"{LowerFirst(n)}.updated", $"{LowerFirst(n)}.deleted"
+            }).ToList();
 
         var sb = new StringBuilder();
         sb.AppendLine($"using System.Text;");
@@ -663,22 +672,37 @@ public class RabbitMqPublisher : IEventPublisher, IDisposable
         sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    /// <summary>Handle incoming cross-service events. Add business logic here.</summary>");
+        sb.AppendLine("    /// <summary>");
+        sb.AppendLine("    /// Обрабатывает входящие события из других сервисов.");
+        sb.AppendLine("    /// Payload десериализуется в Dictionary для гибкости.");
+        sb.AppendLine("    /// Добавьте бизнес-логику: обновление локального кеша, каскадные операции и т.д.");
+        sb.AppendLine("    /// </summary>");
         sb.AppendLine("    private void HandleEvent(string routingKey, string body)");
         sb.AppendLine("    {");
+        sb.AppendLine("        Dictionary<string, object?>? payload = null;");
+        sb.AppendLine("        try { payload = JsonSerializer.Deserialize<Dictionary<string, object?>>(body); }");
+        sb.AppendLine("        catch { _logger.LogWarning(\"Could not parse payload for event: {Key}\", routingKey); }");
+        sb.AppendLine();
         sb.AppendLine("        switch (routingKey)");
         sb.AppendLine("        {");
         foreach (var entityName in otherEntityNames)
         {
             sb.AppendLine($"            case \"{LowerFirst(entityName)}.created\":");
-            sb.AppendLine($"                // TODO: handle {entityName} created");
-            sb.AppendLine($"                break;");
             sb.AppendLine($"            case \"{LowerFirst(entityName)}.updated\":");
-            sb.AppendLine($"                // TODO: handle {entityName} updated");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                // Сохраните снимок {entityName} локально (например, в таблицу Cached{entityName})");
+            sb.AppendLine($"                // чтобы избежать синхронных HTTP-запросов к {entityName}-сервису:");
+            sb.AppendLine($"                // var id = payload?[\"id\"]?.ToString();");
+            sb.AppendLine($"                _logger.LogInformation(\"[{{Service}}] Cached {entityName}: {{Payload}}\", \"{serviceName.ToLower()}\", body);");
             sb.AppendLine($"                break;");
+            sb.AppendLine("            }");
             sb.AppendLine($"            case \"{LowerFirst(entityName)}.deleted\":");
-            sb.AppendLine($"                // TODO: handle {entityName} deleted (e.g. cascade cleanup)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                // Помечаем связанные записи как удалённые / обнуляем внешние ссылки:");
+            sb.AppendLine($"                // var id = payload?[\"id\"]?.ToString();");
+            sb.AppendLine($"                _logger.LogInformation(\"[{{Service}}] {entityName} deleted: {{Payload}}\", \"{serviceName.ToLower()}\", body);");
             sb.AppendLine($"                break;");
+            sb.AppendLine("            }");
         }
         sb.AppendLine("            default:");
         sb.AppendLine("                _logger.LogWarning(\"Unhandled event: {Key}\", routingKey);");
@@ -768,11 +792,11 @@ public class RabbitMqPublisher : IEventPublisher, IDisposable
         sb.AppendLine();
         sb.AppendLine("var app = builder.Build();");
         sb.AppendLine();
-        sb.AppendLine("// Auto-apply migrations on startup");
+        sb.AppendLine("// Автоматическое создание схемы БД при старте (EnsureCreated — без файлов миграций)");
         sb.AppendLine("using (var scope = app.Services.CreateScope())");
         sb.AppendLine("{");
         sb.AppendLine("    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();");
-        sb.AppendLine("    db.Database.Migrate();");
+        sb.AppendLine("    db.Database.EnsureCreated();");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("app.UseSwagger();");
@@ -918,13 +942,40 @@ obj/
         sb.AppendLine();
         sb.AppendLine("services:");
         sb.AppendLine();
+
+        // ── API Gateway ──────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── API Gateway (единая точка входа: http://localhost:80) ─────────────────────");
+        sb.AppendLine("  nginx:");
+        sb.AppendLine("    image: nginx:1.25-alpine");
+        sb.AppendLine("    restart: unless-stopped");
+        sb.AppendLine("    ports:");
+        sb.AppendLine("      - \"80:80\"");
+        sb.AppendLine("    volumes:");
+        sb.AppendLine("      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro");
+        sb.AppendLine("    networks:");
+        sb.AppendLine("      - gateway");
+        sb.AppendLine("      - backend");
+        sb.AppendLine("    depends_on:");
+        if (authService.HasValue)
+            sb.AppendLine("      - auth-service");
+        foreach (var svc in services)
+            sb.AppendLine($"      - {svc.SafeName.ToLower()}-service");
+        sb.AppendLine("    healthcheck:");
+        sb.AppendLine("      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost/health\"]");
+        sb.AppendLine("      interval: 15s");
+        sb.AppendLine("      timeout: 5s");
+        sb.AppendLine("      retries: 3");
+        sb.AppendLine();
+
+        // ── Message Broker ───────────────────────────────────────────────────────
         sb.AppendLine("  # ── Message Broker ──────────────────────────────────────────────────────────");
         sb.AppendLine("  rabbitmq:");
         sb.AppendLine("    image: rabbitmq:3.13-management-alpine");
         sb.AppendLine("    restart: unless-stopped");
         sb.AppendLine("    ports:");
-        sb.AppendLine("      - \"5672:5672\"");
-        sb.AppendLine("      - \"15672:15672\" # Management UI (guest/guest)");
+        sb.AppendLine("      - \"15672:15672\" # Management UI → http://localhost:15672 (guest/guest)");
+        sb.AppendLine("    networks:");
+        sb.AppendLine("      - messaging");
         sb.AppendLine("    volumes:");
         sb.AppendLine("      - rabbitmq_data:/var/lib/rabbitmq");
         sb.AppendLine("    healthcheck:");
@@ -933,12 +984,16 @@ obj/
         sb.AppendLine("      timeout: 5s");
         sb.AppendLine("      retries: 10");
         sb.AppendLine();
-        sb.AppendLine("  # ── Databases ────────────────────────────────────────────────────────────────");
+
+        // ── Databases ────────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── Databases (database-per-service) ────────────────────────────────────────");
         if (authService.HasValue)
         {
             sb.AppendLine($"  {authService.Value.DbName}:");
             sb.AppendLine("    image: postgres:16-alpine");
             sb.AppendLine("    restart: unless-stopped");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - data");
             sb.AppendLine("    environment:");
             sb.AppendLine("      POSTGRES_USER: postgres");
             sb.AppendLine("      POSTGRES_PASSWORD: postgres");
@@ -957,6 +1012,8 @@ obj/
             sb.AppendLine($"  {svc.DbName}:");
             sb.AppendLine("    image: postgres:16-alpine");
             sb.AppendLine("    restart: unless-stopped");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - data");
             sb.AppendLine("    environment:");
             sb.AppendLine("      POSTGRES_USER: postgres");
             sb.AppendLine("      POSTGRES_PASSWORD: postgres");
@@ -970,7 +1027,9 @@ obj/
             sb.AppendLine("      retries: 5");
             sb.AppendLine();
         }
-        sb.AppendLine("  # ── Microservices ─────────────────────────────────────────────────────────────");
+
+        // ── Microservices ─────────────────────────────────────────────────────────
+        sb.AppendLine("  # ── Microservices ────────────────────────────────────────────────────────────");
         if (authService.HasValue)
         {
             sb.AppendLine("  auth-service:");
@@ -978,19 +1037,27 @@ obj/
             sb.AppendLine("      context: ./services/AuthService");
             sb.AppendLine("      dockerfile: Dockerfile");
             sb.AppendLine("    restart: unless-stopped");
-            sb.AppendLine($"    ports:");
-            sb.AppendLine($"      - \"{authService.Value.Port}:8080\"");
+            sb.AppendLine("    env_file: .env");
             sb.AppendLine("    environment:");
             sb.AppendLine($"      - ConnectionStrings__DefaultConnection=Host={authService.Value.DbName};Port=5432;Database={authService.Value.DbName};Username=postgres;Password=postgres");
             sb.AppendLine("      - RabbitMQ__Url=amqp://guest:guest@rabbitmq:5672");
-            sb.AppendLine("      - Jwt__Key=CHANGE_ME_USE_A_LONG_RANDOM_SECRET_KEY_AT_LEAST_32_CHARS");
             sb.AppendLine("      - ASPNETCORE_ENVIRONMENT=Development");
             sb.AppendLine("      - ASPNETCORE_HTTP_PORTS=8080");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - backend");
+            sb.AppendLine("      - messaging");
+            sb.AppendLine("      - data");
             sb.AppendLine("    depends_on:");
             sb.AppendLine($"      {authService.Value.DbName}:");
             sb.AppendLine("        condition: service_healthy");
             sb.AppendLine("      rabbitmq:");
             sb.AppendLine("        condition: service_healthy");
+            sb.AppendLine("    healthcheck:");
+            sb.AppendLine($"      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:8080/health\"]");
+            sb.AppendLine("      interval: 15s");
+            sb.AppendLine("      timeout: 5s");
+            sb.AppendLine("      retries: 5");
+            sb.AppendLine("      start_period: 20s");
             sb.AppendLine();
         }
         foreach (var svc in services)
@@ -1001,15 +1068,16 @@ obj/
             sb.AppendLine($"      context: ./services/{svcDirName}");
             sb.AppendLine("      dockerfile: Dockerfile");
             sb.AppendLine("    restart: unless-stopped");
-            sb.AppendLine($"    ports:");
-            sb.AppendLine($"      - \"{svc.Port}:8080\"");
+            sb.AppendLine("    env_file: .env");
             sb.AppendLine("    environment:");
             sb.AppendLine($"      - ConnectionStrings__DefaultConnection=Host={svc.DbName};Port=5432;Database={svc.DbName};Username=postgres;Password=postgres");
             sb.AppendLine("      - RabbitMQ__Url=amqp://guest:guest@rabbitmq:5672");
-            if (authService.HasValue)
-                sb.AppendLine("      - Jwt__Key=CHANGE_ME_USE_A_LONG_RANDOM_SECRET_KEY_AT_LEAST_32_CHARS");
             sb.AppendLine("      - ASPNETCORE_ENVIRONMENT=Development");
             sb.AppendLine("      - ASPNETCORE_HTTP_PORTS=8080");
+            sb.AppendLine("    networks:");
+            sb.AppendLine("      - backend");
+            sb.AppendLine("      - messaging");
+            sb.AppendLine("      - data");
             sb.AppendLine("    depends_on:");
             sb.AppendLine($"      {svc.DbName}:");
             sb.AppendLine("        condition: service_healthy");
@@ -1018,16 +1086,134 @@ obj/
             if (authService.HasValue)
             {
                 sb.AppendLine("      auth-service:");
-                sb.AppendLine("        condition: service_started");
+                sb.AppendLine("        condition: service_healthy");
             }
+            sb.AppendLine("    healthcheck:");
+            sb.AppendLine($"      test: [\"CMD\", \"wget\", \"-qO-\", \"http://localhost:8080/health\"]");
+            sb.AppendLine("      interval: 15s");
+            sb.AppendLine("      timeout: 5s");
+            sb.AppendLine("      retries: 5");
+            sb.AppendLine("      start_period: 20s");
             sb.AppendLine();
         }
+
+        // ── Networks ─────────────────────────────────────────────────────────────
+        sb.AppendLine("networks:");
+        sb.AppendLine("  gateway:   # nginx ↔ микросервисы");
+        sb.AppendLine("  backend:   # межсервисные запросы");
+        sb.AppendLine("  messaging: # сервисы ↔ RabbitMQ");
+        sb.AppendLine("  data:      # сервисы ↔ PostgreSQL (изолированная сеть баз данных)");
+        sb.AppendLine();
+
+        // ── Volumes ──────────────────────────────────────────────────────────────
         sb.AppendLine("volumes:");
         sb.AppendLine("  rabbitmq_data:");
         if (authService.HasValue) sb.AppendLine($"  {authService.Value.DbName}_data:");
         foreach (var svc in services) sb.AppendLine($"  {svc.DbName}_data:");
 
         return sb.ToString();
+    }
+
+    private string GenerateNginxConfig(
+        List<(string SafeName, int Port, int PgPort, string DbName)> services,
+        (int Port, int PgPort, string DbName)? authService = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("events {");
+        sb.AppendLine("  worker_connections 1024;");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("http {");
+        sb.AppendLine("  include       /etc/nginx/mime.types;");
+        sb.AppendLine("  default_type  application/octet-stream;");
+        sb.AppendLine("  sendfile      on;");
+        sb.AppendLine("  keepalive_timeout 65;");
+        sb.AppendLine();
+        sb.AppendLine("  # ── Upstream блоки ────────────────────────────────────────────────────────────");
+        if (authService.HasValue)
+        {
+            sb.AppendLine("  upstream auth_service {");
+            sb.AppendLine($"    server auth-service:8080;");
+            sb.AppendLine("  }");
+        }
+        foreach (var svc in services)
+        {
+            var upstreamName = svc.SafeName.ToLower().Replace("-", "_") + "_service";
+            sb.AppendLine($"  upstream {upstreamName} {{");
+            sb.AppendLine($"    server {svc.SafeName.ToLower()}-service:8080;");
+            sb.AppendLine("  }");
+        }
+        sb.AppendLine();
+        sb.AppendLine("  server {");
+        sb.AppendLine("    listen 80;");
+        sb.AppendLine("    server_name _;");
+        sb.AppendLine();
+        sb.AppendLine("    proxy_http_version 1.1;");
+        sb.AppendLine("    proxy_set_header Host              $host;");
+        sb.AppendLine("    proxy_set_header X-Real-IP         $remote_addr;");
+        sb.AppendLine("    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;");
+        sb.AppendLine("    proxy_set_header X-Forwarded-Proto $scheme;");
+        sb.AppendLine();
+        sb.AppendLine("    location = /health {");
+        sb.AppendLine("      access_log off;");
+        sb.AppendLine("      return 200 '{\"gateway\":\"ok\"}';");
+        sb.AppendLine("      add_header Content-Type application/json;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        if (authService.HasValue)
+        {
+            sb.AppendLine("    location /api/auth {");
+            sb.AppendLine("      proxy_pass http://auth_service;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    location /swagger/auth {");
+            sb.AppendLine("      proxy_pass http://auth_service/swagger;");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+        foreach (var svc in services)
+        {
+            var upstreamName = svc.SafeName.ToLower().Replace("-", "_") + "_service";
+            var apiPath = LowerFirst(Pluralize(svc.SafeName));
+            sb.AppendLine($"    location /api/{apiPath} {{");
+            sb.AppendLine($"      proxy_pass http://{upstreamName};");
+            sb.AppendLine("    }");
+            sb.AppendLine($"    location /swagger/{svc.SafeName.ToLower()} {{");
+            sb.AppendLine($"      proxy_pass http://{upstreamName}/swagger;");
+            sb.AppendLine("    }");
+            sb.AppendLine();
+        }
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    private string GenerateRootEnv(
+        List<(string SafeName, int Port, int PgPort, string DbName)> services,
+        (int Port, int PgPort, string DbName)? authService,
+        AuthConfig? auth)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# ── Общие переменные окружения (используются всеми сервисами через env_file) ──");
+        sb.AppendLine("RabbitMQ__Url=amqp://guest:guest@rabbitmq:5672");
+        sb.AppendLine("ASPNETCORE_ENVIRONMENT=Development");
+        sb.AppendLine("ASPNETCORE_HTTP_PORTS=8080");
+        if (auth?.Enabled == true)
+        {
+            sb.AppendLine();
+            sb.AppendLine("# ── JWT (общий секрет для всех сервисов) ─────────────────────────────────────");
+            sb.AppendLine("Jwt__Key=CHANGE_ME_USE_A_LONG_RANDOM_SECRET_KEY_AT_LEAST_32_CHARS");
+            sb.AppendLine($"Jwt__ExpiresMinutes={auth.TokenExpiryMinutes}");
+        }
+        return sb.ToString();
+    }
+
+    private string GenerateRootEnvExample(
+        List<(string SafeName, int Port, int PgPort, string DbName)> services,
+        (int Port, int PgPort, string DbName)? authService,
+        AuthConfig? auth)
+    {
+        return GenerateRootEnv(services, authService, auth)
+            .Replace("CHANGE_ME_USE_A_LONG_RANDOM_SECRET_KEY_AT_LEAST_32_CHARS", "<your-secret>");
     }
 
     // ─────────────────────────── README ───────────────────────────
@@ -1369,11 +1555,11 @@ public class ApplicationDbContext : DbContext
         sb.AppendLine();
         sb.AppendLine("var app = builder.Build();");
         sb.AppendLine();
-        sb.AppendLine("// Auto-apply migrations on startup");
+        sb.AppendLine("// Автоматическое создание схемы БД при старте (EnsureCreated — без файлов миграций)");
         sb.AppendLine("using (var scope = app.Services.CreateScope())");
         sb.AppendLine("{");
         sb.AppendLine("    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();");
-        sb.AppendLine("    db.Database.Migrate();");
+        sb.AppendLine("    db.Database.EnsureCreated();");
         sb.AppendLine("}");
         sb.AppendLine();
         sb.AppendLine("app.UseSwagger();");
